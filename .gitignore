@@ -1,0 +1,12 @@
+# 계정 접근권한 그 자체. 절대 커밋 금지.
+playwright-state/
+storage_state.json
+
+# 셀렉터 실측 산출물 (블로그 내용이 들어갈 수 있다)
+dom_dump*.html
+dom_probe*.txt
+
+__pycache__/
+*.py[cod]
+.venv/
+.env
