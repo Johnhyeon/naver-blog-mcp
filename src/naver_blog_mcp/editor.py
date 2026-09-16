@@ -171,12 +171,23 @@ async def read_categories(page: Page, frame: Frame) -> list[tuple[str, bool]]:
     return [_clean_category(t) for t in await loc.all_inner_texts() if t.strip()]
 
 
+def split_category_path(name: str) -> str:
+    """"부모 > 자식" 으로 준 이름에서 실제로 고를 이름(마지막 칸)만 남긴다.
+
+    드롭다운 항목은 부모와 자식이 각각 한 줄이라 "종목 분석 > 국장" 같은
+    전체 경로로는 아무것도 못 고른다. 사람이 쓰는 표기를 그대로 받기 위해 여기서 자른다.
+    """
+    return name.split(">")[-1].strip() if ">" in name else name.strip()
+
+
 async def set_category(page: Page, frame: Frame, name: str) -> None:
     """카테고리를 고른다. 이름이 정확히 일치하는 항목을 우선한다.
 
     :has-text() 는 부분 매칭이라 "캠핑" 이 "캠핑하는 남자" 를 잡는다. 그래서
     정확 일치를 먼저 훑고, 없을 때만 부분 매칭으로 떨어진다.
+    "부모 > 자식" 표기로 줘도 된다. 마지막 칸으로 고른다.
     """
+    name = split_category_path(name)
     await _open_category_dropdown(page, frame)
     loc = await _category_items(frame)
     if loc is not None:

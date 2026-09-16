@@ -10,7 +10,10 @@
 from __future__ import annotations
 
 import functools
+import json
 import os
+import re
+from pathlib import Path
 
 # mcp 2.0 에서 FastMCP -> MCPServer 로 이름이 바뀌었다. 데코레이터/run() 은 동일.
 from mcp.server import MCPServer
@@ -39,6 +42,10 @@ from .session import Session
 
 mcp = MCPServer("naver-blog")
 BLOG_ID = os.getenv("NAVER_BLOG_ID", "")
+
+# 읽기 전용 모드: 발행과 삭제 도구를 아예 등록하지 않는다.
+# 부르지 못하게 막는 가장 확실한 방법은 도구 목록에 없는 것이다.
+READONLY = os.getenv("NAVER_BLOG_READONLY", "").lower() not in ("", "0", "false", "no")
 
 _NO_BLOG_ID = (
     "NAVER_BLOG_ID 가 설정되지 않았습니다.\n"
@@ -126,7 +133,13 @@ async def create_draft(
     둘 다 로컬 파일 경로여야 한다 (URL 불가). 파일은 개당 10MB 제한.
     수식은 :::formula x^2+y^2=z^2:::, 장소는 :::place 강남역::: 이다.
     장소는 검색 결과 중 첫 번째를 쓰며, 무엇을 골랐는지 결과에 표시된다.
+
+    글과 이미지가 한 폴더에 있으면 create_draft_from_folder 가 편하다.
     """
+    return await _draft(title, markdown, category, tags)
+
+
+async def _draft(title: str, markdown: str, category: str, tags: list[str] | None) -> str:
     async with Session() as ctx:
         page = await ctx.new_page()
         try:
@@ -170,6 +183,107 @@ async def create_draft(
                 f"확인 후 publish_draft 를 호출하세요.")
 
 
+# ---------------------------------------------------------------- 폴더 통째로
+
+_IMG_RE = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
+_FILE_RE = re.compile(r":::file\s+([^:]+):::")
+_MAX_BYTES = 10 * 1024 * 1024
+
+
+def _abs_local(base: Path, raw: str) -> Path:
+    p = Path(raw.strip().strip('"').strip("'")).expanduser()
+    return p if p.is_absolute() else (base / p)
+
+
+def preflight(base: Path, markdown: str) -> tuple[str, list[str]]:
+    """이미지·첨부 경로를 절대경로로 바꾸고, 없는 파일과 용량 초과를 모아 돌려준다.
+
+    브라우저를 띄우기 전에 한 번에 확인한다. 넣다가 중간에 멈추면 임시저장함에
+    반쪽짜리 글이 남고, 어디까지 들어갔는지 사람이 다시 확인해야 한다.
+    """
+    problems: list[str] = []
+
+    def fix_img(m: re.Match) -> str:
+        p = _abs_local(base, m.group(2))
+        if not p.exists():
+            problems.append(f"이미지 없음: {m.group(2)}")
+        elif p.stat().st_size > _MAX_BYTES:
+            problems.append(f"10MB 초과: {m.group(2)} ({p.stat().st_size / 1_048_576:.1f}MB)")
+        return f"![{m.group(1)}]({p})"
+
+    def fix_file(m: re.Match) -> str:
+        p = _abs_local(base, m.group(1))
+        if not p.exists():
+            problems.append(f"첨부 없음: {m.group(1)}")
+        return f":::file {p}:::"
+
+    out = _FILE_RE.sub(fix_file, _IMG_RE.sub(fix_img, markdown))
+    return out, problems
+
+
+def split_title(markdown: str) -> tuple[str, str]:
+    """첫 줄이 '# 제목' 이면 떼어낸다. 제목이 본문에 한 번 더 나오지 않게."""
+    lines = markdown.lstrip().splitlines()
+    if lines and lines[0].startswith("# "):
+        return lines[0][2:].strip(), "\n".join(lines[1:]).lstrip("\n")
+    return "", markdown
+
+
+def read_meta(folder: Path) -> dict:
+    """meta.json 에서 제목·카테고리·태그를 읽는다. 없거나 깨졌으면 빈 값.
+
+    title·category·tags 를 먼저 보고, title 이 없으면
+    title_candidates 와 title_recommended 조합을 쓴다.
+    """
+    f = folder / "meta.json"
+    if not f.exists():
+        return {}
+    try:
+        d = json.loads(f.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    title = d.get("title") or ""
+    if not title:
+        cands = d.get("title_candidates") or []
+        i = d.get("title_recommended", 0)
+        if isinstance(i, int) and 0 <= i < len(cands):
+            title = cands[i]
+    return {"title": title, "category": d.get("category") or "", "tags": d.get("tags") or []}
+
+
+@mcp.tool()
+@guarded
+async def create_draft_from_folder(
+    folder: str,
+    markdown_file: str = "post.md",
+    title: str = "",
+    category: str = "",
+    tags: list[str] | None = None,
+) -> str:
+    """글 파일과 이미지가 같은 폴더에 있을 때 폴더째 임시저장한다. 발행하지 않는다.
+
+    - 이미지는 폴더 기준 상대경로로 적어도 된다(`![캡션](images/01-x.png)`).
+    - 같은 폴더의 meta.json 에서 제목·카테고리·태그를 읽는다. 인자로 준 값이 우선.
+    - 글 첫 줄이 '# 제목' 이면 제목으로 쓰고 본문에서 뺀다.
+    - 브라우저를 열기 전에 이미지부터 확인한다. 하나라도 없으면 아무것도 하지 않는다.
+    """
+    base = Path(folder).expanduser().resolve()
+    src = base / markdown_file
+    if not src.exists():
+        return f"글 파일 없음: {src}"
+    head_title, body = split_title(src.read_text(encoding="utf-8"))
+    meta = read_meta(base)
+    title = title or meta.get("title") or head_title
+    category = category or meta.get("category", "")
+    tags = tags or meta.get("tags") or None
+    if not title:
+        return "제목이 없습니다 — 인자로 주거나 글 첫 줄에 '# 제목' 을 두세요."
+    body, problems = preflight(base, body)
+    if problems:
+        return "넣기 전에 걸린 것 (아무것도 하지 않았습니다):\n- " + "\n- ".join(problems)
+    return await _draft(title, body, category, tags)
+
+
 @mcp.tool()
 @guarded
 async def list_drafts() -> str:
@@ -187,7 +301,6 @@ async def list_drafts() -> str:
         return "\n".join(f"{t}  ({d})" for t, d in drafts)
 
 
-@mcp.tool()
 @guarded
 async def delete_draft(confirm: bool = False, title: str = "") -> str:
     """임시저장 글을 삭제한다. 복구되지 않으므로 confirm=True 를 명시해야 한다.
@@ -208,7 +321,6 @@ async def delete_draft(confirm: bool = False, title: str = "") -> str:
         return f"삭제 완료: {gone}\n남은 임시저장: {left}건"
 
 
-@mcp.tool()
 @guarded
 async def delete_post(url_or_log_no: str, confirm: bool = False) -> str:
     """발행된 글을 삭제한다. 복구되지 않으므로 confirm=True 를 명시해야 한다.
@@ -227,7 +339,6 @@ async def delete_post(url_or_log_no: str, confirm: bool = False) -> str:
         return f"글 삭제 완료: {gone}"
 
 
-@mcp.tool()
 @guarded
 async def publish_draft(confirm: bool = False, title: str = "",
                         visibility: str = "") -> str:
@@ -267,6 +378,12 @@ async def publish_draft(confirm: bool = False, title: str = "",
         await page.wait_for_timeout(3000)
         vis = f" ({visibility})" if visibility else ""
         return f"발행 완료: {loaded}{vis}\n{page.url}"
+
+
+# 발행과 삭제는 되돌리기 어렵다. 읽기 전용 모드면 도구 목록에서 아예 뺀다.
+if not READONLY:
+    for _fn in (publish_draft, delete_draft, delete_post):
+        mcp.tool()(_fn)
 
 
 def main() -> None:
