@@ -281,7 +281,14 @@ async def close_draft_list(page: Page, frame: Frame) -> None:
 async def list_drafts(page: Page, frame: Frame) -> list[tuple[str, str]]:
     """[(제목, 저장일시), ...]. 최신순으로 나온다."""
     await open_draft_list(page, frame)
-    items = await _locate_all(frame, S.DRAFT_ITEM)
+    # 삭제 직후에는 목록이 다시 그려지는 동안 잠깐 비어 보인다. 바로 [] 를 돌려주면
+    # 연달아 지울 때 "임시저장된 글이 없습니다" 로 멈춘다. 개수 표시가 0 이 아니면 기다린다.
+    items = None
+    for _ in range(16):
+        items = await _locate_all(frame, S.DRAFT_ITEM)
+        if items is not None or await draft_count(frame) == 0:
+            break
+        await asyncio.sleep(0.25)
     if items is None:
         return []
     out = []
