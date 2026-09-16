@@ -43,6 +43,7 @@ class Block:
     caption: str = ""         # image 캡션
     rows: list[list[list[Span]]] = field(default_factory=list)  # table: 행 > 셀 > 스팬
     header: bool = False      # table: 첫 행이 헤더인가
+    gap: bool = False         # 앞에 빈 줄이 있었나. 에디터에서도 한 줄 띄운다
 
 
 # ---------------------------------------------------------------- 인라인 파서
@@ -51,6 +52,8 @@ _INLINE = re.compile(
     r"(?P<link>\[(?P<ltext>[^\]]+)\]\((?P<href>[^)]+)\))"
     r"|(?P<bold>\*\*(?P<btext>.+?)\*\*)"
     r"|(?P<strike>~~(?P<stext>.+?)~~)"
+    # 밑줄은 표준 마크다운에 없다. ++글자++ 로 쓴다(markdown-it ins 확장과 같은 표기).
+    r"|(?P<under>\+\+(?P<utext>.+?)\+\+)"
     r"|(?P<code>`(?P<ctext>[^`]+)`)"
     r"|(?P<italic>(?<![*\w])\*(?P<itext>[^*]+)\*(?![*\w]))"
 )
@@ -68,6 +71,8 @@ def parse_inline(text: str) -> list[Span]:
             spans.append(Span(m.group("btext"), bold=True))
         elif m.group("strike"):
             spans.append(Span(m.group("stext"), strike=True))
+        elif m.group("under"):
+            spans.append(Span(m.group("utext"), underline=True))
         elif m.group("code"):
             spans.append(Span(m.group("ctext"), code=True))
         elif m.group("italic"):
@@ -113,12 +118,22 @@ def parse_markdown(md: str) -> list[Block]:
     blocks: list[Block] = []
     lines = md.replace("\r\n", "\n").split("\n")
     i = 0
+    gap = [False]
+
+    def add(b: Block) -> None:
+        # 앞에 빈 줄이 있었으면 표시한다. 첫 블록과 그림·파일 바로 뒤에는 붙이지 않는다.
+        # 그림 컴포넌트는 에디터가 위아래 간격을 이미 준다.
+        if gap[0] and blocks and blocks[-1].type not in ("image", "file"):
+            b.gap = True
+        gap[0] = False
+        blocks.append(b)
 
     while i < len(lines):
         line = lines[i]
         stripped = line.strip()
 
         if not stripped:
+            gap[0] = True
             i += 1
             continue
 
@@ -131,12 +146,12 @@ def parse_markdown(md: str) -> list[Block]:
                 body.append(lines[i])
                 i += 1
             i += 1
-            blocks.append(Block("code", lang=lang, raw="\n".join(body)))
+            add(Block("code", lang=lang, raw="\n".join(body)))
             continue
 
         # 구분선
         if re.fullmatch(r"(-{3,}|\*{3,}|_{3,})", stripped):
-            blocks.append(Block("divider"))
+            add(Block("divider"))
             i += 1
             continue
 
@@ -145,7 +160,7 @@ def parse_markdown(md: str) -> list[Block]:
         if m and m.group("name") in _KNOWN_DIRECTIVES:
             name, arg = m.group("name"), m.group("arg")
             # file 은 경로, formula/place 는 스크립트·검색어라 raw 에 담는다.
-            blocks.append(Block(name, path=arg) if name == "file" else Block(name, raw=arg))
+            add(Block(name, path=arg) if name == "file" else Block(name, raw=arg))
             i += 1
             continue
         # 모르는 디렉티브는 버리지 않고 문단으로 강등한다 (아래 문단 처리로 흘러감).
@@ -157,13 +172,13 @@ def parse_markdown(md: str) -> list[Block]:
             while i < len(lines) and "|" in lines[i] and lines[i].strip():
                 rows.append(_table_cells(lines[i].strip()))
                 i += 1
-            blocks.append(Block("table", rows=rows, header=True))
+            add(Block("table", rows=rows, header=True))
             continue
 
         # 이미지 (단독 줄일 때만)
         m = _IMG.match(stripped)
         if m:
-            blocks.append(Block("image", path=m.group("src"), caption=m.group("alt")))
+            add(Block("image", path=m.group("src"), caption=m.group("alt")))
             i += 1
             continue
 
@@ -171,7 +186,7 @@ def parse_markdown(md: str) -> list[Block]:
         m = _HEADING.match(stripped)
         if m:
             level = min(len(m.group(1)), 3)  # 네이버는 사실상 3단계
-            blocks.append(Block("heading", spans=parse_inline(m.group(2)), level=level))
+            add(Block("heading", spans=parse_inline(m.group(2)), level=level))
             i += 1
             continue
 
@@ -181,7 +196,7 @@ def parse_markdown(md: str) -> list[Block]:
             while i < len(lines) and lines[i].strip().startswith(">"):
                 buf.append(lines[i].strip().lstrip(">").strip())
                 i += 1
-            blocks.append(Block("quote", spans=parse_inline(" ".join(buf))))
+            add(Block("quote", spans=parse_inline(" ".join(buf))))
             continue
 
         # 목록
@@ -195,7 +210,7 @@ def parse_markdown(md: str) -> list[Block]:
                     break
                 items.append(parse_inline(mm.group(2)))
                 i += 1
-            blocks.append(Block("list", ordered=ordered, items=items))
+            add(Block("list", ordered=ordered, items=items))
             continue
 
         # 문단 (빈 줄까지 이어붙임)
@@ -216,12 +231,15 @@ def parse_markdown(md: str) -> list[Block]:
             buf.append(nxt)
             i += 1
         if buf:
-            blocks.append(Block("paragraph", spans=parse_inline(" ".join(buf))))
+            # 줄을 공백으로 이어 붙이면 "데이터 출처" 같은 목록이 한 줄로 뭉친다.
+            # 사람이 줄을 바꿨으면 에디터에서도 바꾼다(2026-09-16 실측).
+            for text in buf:
+                add(Block("paragraph", spans=parse_inline(text)))
         elif i < len(lines):
             # 여기까지 왔는데 한 줄도 못 먹었다면 어떤 분기도 이 줄을 처리하지 못한 것이다.
             # 그대로 두면 같은 자리를 무한히 돈다 (2026-09-16 실측: 해시태그 줄에서 정지).
             # 내용을 버리지 않고 문단으로 강등한 뒤 반드시 한 줄 전진한다.
-            blocks.append(Block("paragraph", spans=parse_inline(lines[i].strip())))
+            add(Block("paragraph", spans=parse_inline(lines[i].strip())))
             i += 1
 
     return blocks
@@ -248,7 +266,19 @@ def _span_html(s: Span) -> str:
 
 
 def block_html(b: Block) -> str:
-    """블록 하나를 클립보드용 HTML로. 이미지 블록은 빈 문자열(별도 처리)."""
+    """블록 하나를 클립보드용 HTML로. 이미지 블록은 빈 문자열(별도 처리).
+
+    앞에 빈 줄이 있던 블록(gap)은 빈 문단을 하나 앞에 붙여 에디터에서도 띄운다.
+    """
+    html_ = _block_html(b)
+    return "<p><br></p>" + html_ if (b.gap and html_) else html_
+
+
+# 제목 글자 크기(px). 에디터 크기 코드 fs24/fs19/fs16 에 맞춘다.
+HEADING_PX = {1: 24, 2: 19, 3: 16}
+
+
+def _block_html(b: Block) -> str:
     if b.type == "image":
         return ""
     if b.type == "divider":
@@ -256,8 +286,11 @@ def block_html(b: Block) -> str:
     if b.type == "code":
         return f"<pre>{html.escape(b.raw)}</pre>"
     if b.type == "heading":
+        # <h2> 는 에디터가 크기를 제멋대로 준다. 굵게와 픽셀 크기를 직접 준다.
+        # 제목 뒤 서식 초기화는 write_post 가 한다(제목은 단독 세그먼트).
         inner = "".join(_span_html(s) for s in b.spans)
-        return f"<h{b.level}>{inner}</h{b.level}>"
+        px = HEADING_PX.get(b.level, 19)
+        return f'<p><b><span style="font-size:{px}px">{inner}</span></b></p>'
     if b.type == "quote":
         inner = "".join(_span_html(s) for s in b.spans)
         return f"<blockquote>{inner}</blockquote>"
@@ -322,7 +355,11 @@ def is_paste_safe(b: Block) -> bool:
     """
     if b.type not in PASTE_SAFE:
         return False
-    if b.type not in ("paragraph", "heading"):
+    if b.type == "heading":
+        # 링크 없는 제목은 붙여넣는다. 붙여넣은 제목의 굵게·크기가 다음 줄로 번지는
+        # 문제는 write_post 가 세그먼트마다 서식을 초기화해서 막는다(2026-09-16 실측).
+        return not _has_link(b)
+    if b.type != "paragraph":
         return True
     return not _has_link(b)
 
@@ -354,6 +391,14 @@ def segment(blocks: list[Block]) -> list[Segment]:
             flush_html()
             flush_manual()
             out.append(Segment(b.type, path=b.path, caption=b.caption))
+        elif is_paste_safe(b) and b.type == "heading":
+            # 제목은 단독으로 붙여넣는다. 같은 클립보드에 뒤 문단을 실으면
+            # 초기화할 틈 없이 제목 서식을 물려받을 수 있다.
+            flush_manual()
+            flush_html()
+            buf.append(block_html(b))
+            src.append(b)
+            flush_html()
         elif is_paste_safe(b):
             flush_manual()
             buf.append(block_html(b))

@@ -589,6 +589,28 @@ async def _clear_toggle(frame: Frame, candidates: list[str]) -> None:
         await asyncio.sleep(0.25)
 
 
+async def reset_style(page: Page, frame: Frame) -> None:
+    """다음에 쓸 글의 서식을 보통으로 되돌린다.
+
+    에디터는 마지막으로 쓴 서식을 기억했다가, 뒤에 붙여넣거나 타이핑하는 글에 그대로
+    입힌다. 제목 뒤 모든 문단이 큰 글씨·굵게가 되고, 기울임 한 줄 뒤로 전부 기울임이
+    됐다(2026-09-16 실측). 인라인 스타일로 "보통"을 명시해도 굵게는 안 풀렸고,
+    툴바 토글을 끄고 글자 크기를 본문으로 되돌리는 것만 확실히 먹혔다.
+    """
+    for cands in (S.BOLD_BUTTON, S.ITALIC_BUTTON, S.UNDERLINE_BUTTON, S.STRIKE_BUTTON):
+        try:
+            await _clear_toggle(frame, cands)
+        except Exception:
+            pass
+    try:
+        fs = await S.first(frame, S.FONT_SIZE_BUTTON, timeout=1500)
+        label = (await fs.inner_text()).strip() if fs else ""
+        if S.BODY_SIZE.replace("fs", "") not in label:
+            await set_font_size(page, frame, S.BODY_SIZE)
+    except Exception:
+        pass
+
+
 async def apply_link(page: Page, frame: Frame, url: str) -> None:
     """선택된 텍스트에 링크를 건다.
 
@@ -958,10 +980,12 @@ async def write_post(
                     notes.append(f"{i}:장소({picked[:24]})")
                 else:
                     await _fresh_line(page, frame)
+                    await reset_style(page, frame)
                     await _type_block(page, frame, b)
                     notes.append(f"{i}:{b.type}(타이핑)")
             continue
 
+        await reset_style(page, frame)
         if prefer_paste:
             try:
                 before = await _doc_state(frame)
@@ -1035,11 +1059,16 @@ def _to_plain(html: str) -> str:
 async def _type_block(page: Page, frame: Frame, b: Block) -> None:
     if b.type in ("image", "file", "divider", "formula", "place"):
         return  # 키보드로 만들 수 없다 (write_post 가 툴바로 처리)
+    if b.gap and b.type in ("heading", "paragraph"):
+        await page.keyboard.press("Enter")  # 앞에 빈 줄 하나
     if b.type == "heading":
         # 제목은 "글자 크기" 일 뿐이다. 먼저 내용을 치고(링크 포함),
         # 그 줄을 통째로 선택해서 크기를 준다. 그래야 제목과 링크를 둘 다 살린다.
-        await type_spans(page, frame, b.spans)
-        n = sum(caret_len(sp.text) for sp in b.spans)
+        # 굵게는 타이핑하면서 켰다 끈다. 선택 구간에 굵게를 주면 토글이 켜진 채 남는다.
+        spans = [Span(sp.text, bold=True, italic=sp.italic, underline=sp.underline,
+                      strike=sp.strike, code=sp.code, href=sp.href) for sp in b.spans]
+        await type_spans(page, frame, spans)
+        n = sum(caret_len(sp.text) for sp in spans)
         size = S.HEADING_SIZE.get(b.level, S.BODY_SIZE)
         if n and size != S.BODY_SIZE:
             for _ in range(n):

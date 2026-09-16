@@ -114,6 +114,10 @@ BODY_SIZE = "fs15"
 # ControlOrMeta+Shift+S 는 동작하지 않는다 (검증함). 선택 상태에서 이 버튼을 눌러야 한다.
 # 굵게/기울임/밑줄은 ControlOrMeta+B/I/U 단축키가 정상 동작한다.
 STRIKE_BUTTON = ["button[data-name='strikethrough']", "button.se-strikethrough-toolbar-button"]
+# 서식 초기화용 토글. 켜져 있으면 TOGGLE_ON_CLASS 가 붙는다(2026-09-16 실측).
+BOLD_BUTTON = ["button[data-name='bold']"]
+ITALIC_BUTTON = ["button[data-name='italic']"]
+UNDERLINE_BUTTON = ["button[data-name='underline']"]
 
 # ---------------------------------------------------------------- 코드블록
 # 툴바 버튼으로만 만들 수 있다.  [실측]
