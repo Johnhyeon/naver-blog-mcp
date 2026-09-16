@@ -374,3 +374,12 @@ MATERIAL_COMPONENT = [".se-component.se-material"]
 # 카드를 누르면 뜨는 모양 버튼. value = material_basic(기본형) | material_small(요약형)
 MATERIAL_LAYOUT = ["button.se-context-toolbar-group-toggle-button[data-name='material-layout'][data-value='{value}']",
                    "button[data-name='material-layout'][data-value='{value}']"]
+
+# ---------------------------------------------------------------- 예약 발행 (발행 레이어 안, 2026-09-16 실측)
+# "발행 시간: 현재 | 예약". 예약을 누르면 날짜 칸(jQuery UI 달력)과 시, 분(10분 단위) 선택이 나온다.
+RESERVE_NOW = ["input[data-testid='nowTimeRadioBtn']", "#radio_time1"]
+RESERVE_PRE = ["input[data-testid='preTimeRadioBtn']", "#radio_time2"]
+RESERVE_DATE = ["input[class*='input_date']"]          # 값 형식 "2026. 09. 17"
+RESERVE_DAY = "td:not(.ui-state-disabled) button.ui-state-default"  # 달력 날짜 버튼
+RESERVE_HOUR = ["select[class*='hour_option']"]         # "00"~"23"
+RESERVE_MINUTE = ["select[class*='minute_option']"]     # "00","10",...,"50"

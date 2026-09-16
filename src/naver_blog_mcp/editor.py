@@ -485,6 +485,65 @@ async def delete_draft(page: Page, frame: Frame, title: str = "", index: int | N
     return target
 
 
+async def reserve_state(frame: Frame) -> dict:
+    """발행 레이어의 발행 시간 상태. {pre, date, hour, minute}"""
+    return await frame.evaluate(
+        """([pre, date, hour, minute]) => ({
+          pre: !!(document.querySelector(pre) || {}).checked,
+          date: (document.querySelector(date) || {}).value || "",
+          hour: (document.querySelector(hour) || {}).value || "",
+          minute: (document.querySelector(minute) || {}).value || "" })""",
+        [S.RESERVE_PRE[0], S.RESERVE_DATE[0], S.RESERVE_HOUR[0], S.RESERVE_MINUTE[0]])
+
+
+async def set_reservation(page: Page, frame: Frame, when) -> dict:
+    """발행 레이어에서 예약 발행 시각을 맞추고, 화면 값이 정확히 그 시각인지 확인해 돌려준다.
+
+    when: datetime (한국 시간). 분은 10분 단위만 된다. 이번 달 날짜만 지원한다(달 넘기기 없음).
+    값이 하나라도 다르면 EditorError. 이 함수는 발행 버튼을 누르지 않는다.
+    """
+    if when.minute % 10:
+        raise EditorError(f"예약 분은 10분 단위만 됩니다: {when:%H:%M}")
+    await open_publish_panel(page, frame)
+    pre = frame.locator(S.RESERVE_PRE[0])
+    if not await pre.count():
+        raise EditorError("예약 라디오를 못 찾음 — selectors.RESERVE_PRE 갱신 필요")
+    await pre.first.evaluate("e => e.click()")
+    await asyncio.sleep(0.8)
+
+    want_date = f"{when:%Y. %m. %d}"
+    state = await reserve_state(frame)
+    if state["date"] != want_date:
+        if state["date"][:9] != want_date[:9]:
+            raise EditorError(f"다른 달 예약은 지원하지 않음: 지금 {state['date']}, 원하는 {want_date}")
+        await frame.locator(S.RESERVE_DATE[0]).first.click()
+        await asyncio.sleep(0.8)
+        days = frame.locator(S.RESERVE_DAY)
+        for i in range(await days.count()):
+            if (await days.nth(i).inner_text()).strip() == str(when.day):
+                await days.nth(i).click()
+                break
+        else:
+            raise EditorError(f"달력에서 {when.day}일을 못 찾음(지난 날짜일 수 있음)")
+        await asyncio.sleep(0.6)
+    await frame.locator(S.RESERVE_HOUR[0]).first.select_option(f"{when.hour:02d}")
+    await frame.locator(S.RESERVE_MINUTE[0]).first.select_option(f"{when.minute:02d}")
+    await asyncio.sleep(0.6)
+
+    state = await reserve_state(frame)
+    want = {"pre": True, "date": want_date, "hour": f"{when.hour:02d}", "minute": f"{when.minute:02d}"}
+    if state != want:
+        raise EditorError(f"예약 시각이 화면에 제대로 안 들어감: 화면 {state}, 원하는 {want}")
+    return state
+
+
+async def reserved_count(frame: Frame) -> int | None:
+    """상단의 '예약 발행 N건' 숫자. 화면에 숨어 있어도 글자는 DOM 에 있다."""
+    text = await frame.evaluate("() => document.body.textContent")
+    m = re.search(r"예약\s*발행\s*(\d+)\s*건", text or "")
+    return int(m.group(1)) if m else None
+
+
 async def title_is_empty(frame: Frame) -> bool:
     """제목이 비었는지. 비어 있으면 se-placeholder 가 보인다."""
     ph = await S.first(frame, S.TITLE_PLACEHOLDER, timeout=1500)
