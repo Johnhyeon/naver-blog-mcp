@@ -91,6 +91,8 @@ _KNOWN_DIRECTIVES = {"file", "formula", "place"}
 
 
 _TABLE_SEP = re.compile(r"^\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)*\|?$")
+# 제목은 샵 뒤에 공백이 있어야 한다. "#태그" 같은 줄은 제목이 아니다.
+_HEADING = re.compile(r"^(#{1,6})\s+(.*)$")
 
 
 def _table_cells(line: str) -> list[list[Span]]:
@@ -166,7 +168,7 @@ def parse_markdown(md: str) -> list[Block]:
             continue
 
         # 제목
-        m = re.match(r"^(#{1,6})\s+(.*)$", stripped)
+        m = _HEADING.match(stripped)
         if m:
             level = min(len(m.group(1)), 3)  # 네이버는 사실상 3단계
             blocks.append(Block("heading", spans=parse_inline(m.group(2)), level=level))
@@ -200,7 +202,9 @@ def parse_markdown(md: str) -> list[Block]:
         buf = []
         while i < len(lines) and lines[i].strip():
             nxt = lines[i].strip()
-            if nxt.startswith(("#", ">", "```")) or _IMG.match(nxt):
+            # "#" 로 시작해도 제목이 아닐 수 있다. 해시태그 줄("#광통신 #종목분석")이 그렇다.
+            # 제목이 아닌데 여기서 끊으면 아무 줄도 소비하지 못해 무한 루프가 된다.
+            if nxt.startswith((">", "```")) or _HEADING.match(nxt) or _IMG.match(nxt):
                 break
             if re.match(r"^\s*([-*+]|\d+\.)\s+", lines[i]):
                 break
@@ -213,6 +217,12 @@ def parse_markdown(md: str) -> list[Block]:
             i += 1
         if buf:
             blocks.append(Block("paragraph", spans=parse_inline(" ".join(buf))))
+        elif i < len(lines):
+            # 여기까지 왔는데 한 줄도 못 먹었다면 어떤 분기도 이 줄을 처리하지 못한 것이다.
+            # 그대로 두면 같은 자리를 무한히 돈다 (2026-09-16 실측: 해시태그 줄에서 정지).
+            # 내용을 버리지 않고 문단으로 강등한 뒤 반드시 한 줄 전진한다.
+            blocks.append(Block("paragraph", spans=parse_inline(lines[i].strip())))
+            i += 1
 
     return blocks
 
