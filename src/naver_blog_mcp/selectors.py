@@ -357,3 +357,20 @@ async def first(scope, candidates: list[str], timeout: int = 3000, **fmt):
         if asyncio.get_event_loop().time() >= deadline:
             return None
         await asyncio.sleep(0.25)
+
+# ---------------------------------------------------------------- 글감(뉴스, 증권, 책)
+# 본문 아래 떠 있는 글감 바. 접혀 있으면 툴바 '글감' 버튼으로 편다(2026-09-16 실측).
+MATERIAL_BAR = [".se-floating-material-container"]
+MATERIAL_TOOLBAR = ["button[data-name='search'].se-document-toolbar-toggle-button"]
+MATERIAL_CATEGORY_TRIGGER = [".se-flayer-unified-category-dropdown-trigger"]
+MATERIAL_INPUT = [".se-floating-material-container input"]
+MATERIAL_ITEM = ["li.se-flayer-item"]
+MATERIAL_ITEM_TITLE = [".se-flayer-material-title"]
+MATERIAL_ITEM_DESC = [".se-flayer-material-detail-description"]
+# '문서에 추가' 는 hover 해야 보이는 div[role=button]. dispatch_event 로 누른다.
+MATERIAL_ADD = [".se-flayer-material-button"]
+MATERIAL_POPUP_CLOSE = [".se-popup-material-item-flayer [class*=close]"]
+MATERIAL_COMPONENT = [".se-component.se-material"]
+# 카드를 누르면 뜨는 모양 버튼. value = material_basic(기본형) | material_small(요약형)
+MATERIAL_LAYOUT = ["button.se-context-toolbar-group-toggle-button[data-name='material-layout'][data-value='{value}']",
+                   "button[data-name='material-layout'][data-value='{value}']"]

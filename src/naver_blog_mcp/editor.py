@@ -948,6 +948,130 @@ async def insert_place(page: Page, frame: Frame, query: str) -> str:
     return picked
 
 
+async def _material_open_bar(page: Page, frame: Frame) -> None:
+    if await S.first(frame, S.MATERIAL_BAR, timeout=1500):
+        return
+    btn = await S.first(frame, S.MATERIAL_TOOLBAR)
+    if not btn:
+        raise EditorError("글감 버튼을 못 찾음 — selectors.MATERIAL_TOOLBAR 갱신 필요")
+    await btn.click()
+    if not await S.first(frame, S.MATERIAL_BAR, timeout=5000):
+        raise EditorError("글감 바가 안 열림 — selectors.MATERIAL_BAR 갱신 필요")
+
+
+async def _material_results(frame: Frame, seconds: int = 8) -> list[tuple[str, str]]:
+    """보이는 검색 결과 [(제목, 설명)]. DOM 순서 그대로(숨김 항목 제외)."""
+    for _ in range(seconds * 2):
+        await asyncio.sleep(0.5)
+        rows = await frame.evaluate(
+            """([item, title, desc]) => [...document.querySelectorAll(item)]
+                 .filter(e => e.offsetParent !== null)
+                 .map(e => [(e.querySelector(title) || {}).innerText || '',
+                            (e.querySelector(desc) || {}).innerText || ''])""",
+            [S.MATERIAL_ITEM[0], S.MATERIAL_ITEM_TITLE[0], S.MATERIAL_ITEM_DESC[0]])
+        if rows:
+            return [(t.strip(), d.replace(chr(10), " ").strip()) for t, d in rows]
+    return []
+
+
+async def _material_close_popup(page: Page, frame: Frame) -> None:
+    close = await S.first(frame, S.MATERIAL_POPUP_CLOSE, timeout=1500)
+    if close:
+        await close.click()
+    else:
+        await page.keyboard.press("Escape")
+    await asyncio.sleep(0.5)
+
+
+async def _material_search(page: Page, frame: Frame, kind: str, arg: str) -> tuple[list[tuple[str, str]], int] | None:
+    """분류를 고르고 검색어 후보로 찾는다. 맞는 결과가 있으면 (결과, 순번), 결과 팝업은 열린 채로 둔다."""
+    from .material import CATEGORY, best_match, queries
+
+    await _material_open_bar(page, frame)
+    trigger = await S.first(frame, S.MATERIAL_CATEGORY_TRIGGER)
+    if not trigger:
+        raise EditorError("글감 분류 버튼을 못 찾음 — selectors.MATERIAL_CATEGORY_TRIGGER 갱신 필요")
+    await trigger.click()
+    await asyncio.sleep(0.6)
+    label = CATEGORY[kind]
+    await frame.locator("li, button").filter(has_text=re.compile(rf"^\s*{label}\s*$")).last.click()
+    await asyncio.sleep(0.5)
+
+    for query in queries(kind, arg):
+        inp = await S.first(frame, S.MATERIAL_INPUT)
+        if not inp:
+            raise EditorError("글감 검색창을 못 찾음 — selectors.MATERIAL_INPUT 갱신 필요")
+        await inp.click()
+        await inp.fill(query)
+        await page.keyboard.press("Enter")
+        rows = await _material_results(frame)
+        idx = best_match(kind, arg, rows)
+        if idx is not None:
+            return rows, idx
+    return None
+
+
+MATERIAL_KINDS = ("news", "stock", "book")
+
+
+async def resolve_materials(page: Page, frame: Frame, blocks: list[Block], notes: list[str]) -> list[Block]:
+    """본문을 쓰기 전에 글감 카드를 미리 찾아본다. 못 찾은 카드는 글자 문단으로 바꾼다.
+
+    쓰는 도중에 검색이 실패하면 커서가 검색창으로 갔다가 돌아오지 못해, 대신 적은 글자가
+    앞 줄 위에 끼어든다(2026-09-16 실측). 그래서 실패는 쓰기 전에 걸러낸다.
+    """
+    from .material import fallback_text
+
+    out: list[Block] = []
+    for b in blocks:
+        if b.type not in MATERIAL_KINDS:
+            out.append(b)
+            continue
+        try:
+            found = await _material_search(page, frame, b.type, b.raw)
+        except (EditorError, ValueError) as e:
+            found = None
+            notes.append(f"글감 {b.type} 검색 오류({e})")
+        if found:
+            out.append(b)
+        else:
+            notes.append(f"글감 {b.type} 못 찾음→글자({b.raw[:30]})")
+            out.append(Block("paragraph", spans=[Span(fallback_text(b.type, b.raw))], gap=b.gap))
+    if any(b.type in MATERIAL_KINDS for b in blocks):
+        await _material_close_popup(page, frame)
+    return out
+
+
+async def insert_material(page: Page, frame: Frame, kind: str, arg: str) -> str | None:
+    """글감 카드(뉴스, 증권, 책)를 넣는다. 고른 '제목 / 설명' 을 반환, 맞는 결과가 없으면 None.
+
+    엉뚱한 카드를 넣지 않는 게 우선이다. 매칭 기준은 material.best_match.
+    """
+    from .material import split_layout
+
+    before = await _count(frame, S.MATERIAL_COMPONENT)
+    found = await _material_search(page, frame, kind, arg)
+    if not found:
+        await _material_close_popup(page, frame)
+        return None
+    rows, idx = found
+    item = frame.locator(f"{S.MATERIAL_ITEM[0]}:visible").nth(idx)
+    await item.locator(S.MATERIAL_ADD[0]).dispatch_event("click")
+    await _wait_added(frame, S.MATERIAL_COMPONENT, before, "글감 카드")
+    await _material_close_popup(page, frame)
+
+    _, layout = split_layout(arg)
+    card = frame.locator(S.MATERIAL_COMPONENT[0]).nth(before)
+    if layout not in (await card.get_attribute("class") or ""):
+        await card.click()
+        await asyncio.sleep(0.6)
+        btn = await S.first(frame, S.MATERIAL_LAYOUT, value=layout)
+        if btn:
+            await btn.click()
+            await asyncio.sleep(0.8)
+    return " / ".join(rows[idx])
+
+
 # ------------------------------------------------------------ 본문 조립
 
 async def write_post(
@@ -959,6 +1083,8 @@ async def write_post(
 ) -> list[str]:
     frame = await get_editor_frame(page)
     await dismiss_popups(frame)
+    notes: list[str] = []
+    blocks = await resolve_materials(page, frame, parse_markdown(markdown), notes)
 
     title_loc = await S.first(frame, S.TITLE)
     if not title_loc:
@@ -971,8 +1097,6 @@ async def write_post(
         raise EditorError("본문 영역을 못 찾음 — selectors.BODY 갱신 필요")
     await body_loc.click()  # 최초 1회만 클릭. 이후에는 커서를 그대로 이어 쓴다.
 
-    blocks = parse_markdown(markdown)
-    notes: list[str] = []
     for i, seg in enumerate(segment(blocks), 1):
         if seg.kind in ("image", "file"):
             if seg.kind == "image":
@@ -1000,6 +1124,17 @@ async def write_post(
                     await insert_divider(page, frame, DIVIDER_STYLE or "line1")
                     await _focus_tail(page, frame)
                     notes.append(f"{i}:구분선({DIVIDER_STYLE})")
+                elif b.type in MATERIAL_KINDS:
+                    try:
+                        picked = await insert_material(page, frame, b.type, b.raw)
+                    except EditorError as e:
+                        picked = None
+                        notes.append(f"{i}:글감 {b.type} 넣기 오류({e})")
+                    await _focus_tail(page, frame)
+                    # 미리 찾아둔 카드라 여기서 못 찾는 일은 드물다. 대신 글자를 치면 커서가
+                    # 엉뚱한 곳에 있어 순서가 뒤섞이므로 치지 않고 기록만 남긴다.
+                    notes.append(f"{i}:글감 {b.type}({picked[:30]})" if picked
+                                 else f"{i}:글감 {b.type} 누락({b.raw[:30]})")
                 elif b.type == "place":
                     picked = await insert_place(page, frame, b.raw)
                     await _focus_tail(page, frame)
