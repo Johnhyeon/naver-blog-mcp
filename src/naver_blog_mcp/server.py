@@ -39,6 +39,7 @@ from .editor import (
     title_is_empty,
     write_post,
 )
+from .ir import YOUTUBE_URL
 from .session import Session, snapshot
 
 mcp = MCPServer("naver-blog")
@@ -193,6 +194,7 @@ async def _draft(title: str, markdown: str, category: str, tags: list[str] | Non
 
 _IMG_RE = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
 _FILE_RE = re.compile(r":::file\s+([^:]+):::")
+_VIDEO_RE = re.compile(r"^\s*:::\s*video\s+(.+?)\s*:::\s*$", re.M)
 _MAX_BYTES = 10 * 1024 * 1024
 
 
@@ -224,6 +226,9 @@ def preflight(base: Path, markdown: str) -> tuple[str, list[str]]:
         return f":::file {p}:::"
 
     out = _FILE_RE.sub(fix_file, _IMG_RE.sub(fix_img, markdown))
+    for m in _VIDEO_RE.finditer(out):
+        if not YOUTUBE_URL.match(m.group(1).strip()):
+            problems.append(f"유튜브 영상 주소가 아님: {m.group(1).strip()}")
     return out, problems
 
 
@@ -236,10 +241,12 @@ def split_title(markdown: str) -> tuple[str, str]:
 
 
 def read_meta(folder: Path) -> dict:
-    """meta.json 에서 제목·카테고리·태그를 읽는다. 없거나 깨졌으면 빈 값.
+    """meta.json 에서 제목·카테고리·태그·주제·유입 코드를 읽는다. 없거나 깨졌으면 빈 값.
 
     title·category·tags 를 먼저 보고, title 이 없으면
     title_candidates 와 title_recommended 조합을 쓴다.
+    topic 과 ref_codes 를 빠뜨리면 주제는 늘 기본값이 되고, draft_folder.py 의
+    체험 링크 수 점검이 0개와 비교해 예약 발행을 늘 막는다(2026-09-17 발견).
     """
     f = folder / "meta.json"
     if not f.exists():
@@ -254,7 +261,8 @@ def read_meta(folder: Path) -> dict:
         i = d.get("title_recommended", 0)
         if isinstance(i, int) and 0 <= i < len(cands):
             title = cands[i]
-    return {"title": title, "category": d.get("category") or "", "tags": d.get("tags") or []}
+    return {"title": title, "category": d.get("category") or "", "tags": d.get("tags") or [],
+            "topic": d.get("topic") or "", "ref_codes": d.get("ref_codes") or []}
 
 
 @mcp.tool()

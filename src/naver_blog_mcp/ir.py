@@ -28,7 +28,7 @@ class Span:
 
 # ---------------------------------------------------------------- blocks
 
-BlockType = Literal["heading", "paragraph", "quote", "list", "code", "image", "divider", "table", "file", "formula", "place", "news", "stock", "book"]
+BlockType = Literal["heading", "paragraph", "quote", "list", "code", "image", "divider", "table", "file", "formula", "place", "news", "stock", "book", "video"]
 
 
 @dataclass
@@ -93,8 +93,13 @@ _IMG = re.compile(r"^!\[(?P<alt>[^\]]*)\]\((?P<src>[^)]+)\)\s*$")
 # 표준 마크다운 뷰어에서는 그냥 텍스트로 보이므로 원문이 깨지지 않는다.
 # :::file 경로:::  :::formula x^2+y^2=z^2:::  :::place 강남역:::
 # :::news 매체 | 기사 제목:::  :::stock 072950:::  :::book 책 제목:::  (글감 카드, material.py)
+# :::video https://www.youtube.com/watch?v=...:::  (유튜브 영상 플레이어)
 _DIRECTIVE = re.compile(r"^:::\s*(?P<name>[a-z]+)\s+(?P<arg>.+?)\s*:::$")
-_KNOWN_DIRECTIVES = {"file", "formula", "place", "news", "stock", "book"}
+_KNOWN_DIRECTIVES = {"file", "formula", "place", "news", "stock", "book", "video"}
+
+# 에디터가 영상 플레이어(se-oembed)로 바꾸는 유튜브 주소. 다른 주소는 링크 카드가 되므로 받지 않는다.
+YOUTUBE_URL = re.compile(
+    r"^https?://(?:www\.|m\.)?(?:youtube\.com/(?:watch\?(?:.*&)?v=|shorts/|live/)|youtu\.be/)[\w-]{11}(?:[?&#][^\s]*)?$")
 
 
 _TABLE_SEP = re.compile(r"^\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)*\|?$")
@@ -112,7 +117,8 @@ def parse_markdown(md: str) -> list[Block]:
 
     지원: 제목(1~3), 문단, 인용, 순서/비순서 목록, 코드블록, 이미지, 구분선, 표,
           파일 첨부(:::file 경로:::), 수식(:::formula ...:::), 장소(:::place 검색어:::),
-          글감 카드(:::news 매체 | 제목:::, :::stock 코드:::, :::book 제목:::)
+          글감 카드(:::news 매체 | 제목:::, :::stock 코드:::, :::book 제목:::),
+          유튜브 영상(:::video 주소:::)
     미지원(문단으로 강등): 각주, 중첩목록 3단계 이상
 
     표는 GFM 파이프 문법이다. 붙여넣기로 se-table 컴포넌트가 되는 것을 실측했다.
@@ -126,7 +132,7 @@ def parse_markdown(md: str) -> list[Block]:
     def add(b: Block) -> None:
         # 앞에 빈 줄이 있었으면 표시한다. 첫 블록과 그림·파일 바로 뒤에는 붙이지 않는다.
         # 그림과 구분선 컴포넌트는 에디터가 위아래 간격을 이미 준다.
-        if gap[0] and blocks and blocks[-1].type not in ("image", "file", "divider", "news", "stock", "book"):
+        if gap[0] and blocks and blocks[-1].type not in ("image", "file", "divider", "news", "stock", "book", "video"):
             b.gap = True
         gap[0] = False
         blocks.append(b)

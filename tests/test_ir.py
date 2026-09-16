@@ -66,6 +66,33 @@ def test_underline_syntax():
     assert "<u>직접 열어본다</u>" in block_html(b)
 
 
+def test_video_directive_goes_manual():
+    from naver_blog_mcp.ir import segment
+    blocks = parse_markdown("앞 문단\n\n:::video https://www.youtube.com/watch?v=MdyffIg1PpQ:::\n\n뒤 문단\n")
+    assert [b.type for b in blocks] == ["paragraph", "video", "paragraph"]
+    assert blocks[1].raw == "https://www.youtube.com/watch?v=MdyffIg1PpQ"
+    assert blocks[2].gap is False  # 플레이어가 위아래 간격을 이미 준다
+    assert [s.kind for s in segment(blocks)] == ["html", "manual", "html"]
+
+
+def test_youtube_url_only():
+    from naver_blog_mcp.ir import YOUTUBE_URL
+    for ok in ("https://www.youtube.com/watch?v=MdyffIg1PpQ", "https://youtu.be/MdyffIg1PpQ",
+               "https://youtube.com/shorts/_S4GgergGDg", "https://www.youtube.com/watch?v=0hfQ_jbxWvM&t=30s"):
+        assert YOUTUBE_URL.match(ok), ok
+    for bad in ("https://youtube.com/@LeetKey_Lab", "https://blog.naver.com/leetkey_lab/224414237102",
+                "https://www.youtube.com/watch?v=short"):
+        assert not YOUTUBE_URL.match(bad), bad
+
+
+def test_preflight_rejects_non_video_url():
+    from naver_blog_mcp.server import preflight
+    _, problems = preflight(Path("."), "글\n\n:::video https://youtube.com/@LeetKey_Lab:::\n")
+    assert problems == ["유튜브 영상 주소가 아님: https://youtube.com/@LeetKey_Lab"]
+    _, problems = preflight(Path("."), ":::video https://youtu.be/MdyffIg1PpQ:::\n")
+    assert problems == []
+
+
 def test_divider_style_goes_manual(monkeypatch=None):
     import importlib, os
     os.environ["NAVER_DIVIDER_STYLE"] = "line2"

@@ -637,11 +637,28 @@ async def _fresh_line(page: Page, frame: Frame) -> None:
     """새 줄에서 시작하게 만든다.
 
     목록의 "- " 자동 변환은 줄 맨 앞에서만 걸린다. 기존 문단 끝에 이어 치면
-    그냥 "- " 문자로 남는다. 문서가 비어 있으면 Enter 를 치지 않는다.
+    그냥 "- " 문자로 남는다. 커서가 선 줄이 이미 비어 있으면 Enter 를 치지 않는다.
+    문서 전체 길이로 보면 영상·글감 카드 뒤 빈 줄에서도 Enter 를 쳐서 빈 줄이 하나 더
+    생긴다(2026-09-17 실측). 커서 줄을 못 읽으면 예전처럼 문서 길이로 본다.
     """
-    if await _body_len(frame) > 0:
+    try:
+        empty = await frame.evaluate(_CARET_LINE_EMPTY_JS)
+    except Exception:
+        empty = None
+    if empty is None:
+        empty = await _body_len(frame) <= 0
+    if not empty:
         await page.keyboard.press("Enter")
         await asyncio.sleep(0.25)
+
+
+_CARET_LINE_EMPTY_JS = """
+() => {
+  const n = window.getSelection().anchorNode;
+  const p = n && (n.nodeType === 1 ? n : n.parentElement).closest('.se-text-paragraph');
+  return p ? p.innerText.split(String.fromCharCode(8203)).join('').trim() === '' : null;
+}
+"""
 
 
 async def paste_html(page: Page, frame: Frame, html: str, plain: str) -> None:
@@ -1197,6 +1214,43 @@ async def insert_material(page: Page, frame: Frame, kind: str, arg: str) -> str 
     return " / ".join(rows[idx])
 
 
+async def insert_video(page: Page, frame: Frame, url: str) -> str:
+    """유튜브 영상 플레이어를 넣는다. 들어간 영상 제목을 반환.
+
+    툴바 '링크' 버튼으로 넣는다(selectors.OGLINK_* 참조). 미리보기가 안 뜨거나 플레이어가
+    아닌 링크 카드가 들어가면 EditorError. 실패해도 글자를 대신 치지 않는다 — 팝업에서
+    커서가 돌아오지 못해 엉뚱한 줄에 끼어든다(글감 카드와 같은 함정).
+    """
+    from .ir import YOUTUBE_URL
+
+    if not YOUTUBE_URL.match(url):
+        raise EditorError(f"유튜브 영상 주소가 아님: {url}")
+    btn = await S.first(frame, S.OGLINK_BUTTON)
+    if not btn:
+        raise EditorError("링크 버튼을 못 찾음 — selectors.OGLINK_BUTTON 갱신 필요")
+    before = await _count(frame, S.VIDEO_COMPONENT)
+    await btn.click()
+    inp = await S.first(frame, S.OGLINK_INPUT, timeout=5000)
+    if not inp:
+        raise EditorError("링크 주소 입력창을 못 찾음 — selectors.OGLINK_INPUT 갱신 필요")
+    await inp.click()
+    await inp.press_sequentially(url, delay=5)
+    await page.keyboard.press("Enter")
+    preview = await S.first(frame, S.OGLINK_PREVIEW, timeout=10_000)
+    confirm = await S.first(frame, S.OGLINK_CONFIRM, timeout=2000) if preview else None
+    if not confirm:
+        close = await S.first(frame, S.OGLINK_CLOSE, timeout=1500)
+        if close:
+            await close.click()
+        raise EditorError(f"영상 미리보기가 안 뜸(비공개·삭제된 영상일 수 있음): {url}")
+    await confirm.click()
+    await _wait_added(frame, S.VIDEO_COMPONENT, before, "영상")
+    player = frame.locator(S.VIDEO_COMPONENT[0]).nth(before)
+    if not await player.locator(S.VIDEO_YOUTUBE).count():
+        raise EditorError(f"영상 플레이어가 아닌 것이 들어감: {url}")
+    return (await player.locator(S.VIDEO_TITLE).first.inner_text()).strip()
+
+
 # ------------------------------------------------------------ 본문 조립
 
 async def write_post(
@@ -1265,6 +1319,13 @@ async def write_post(
                     await _focus_tail(page, frame)
                     # 검색 결과 중 첫 번째를 쓰므로 무엇을 골랐는지 남긴다.
                     notes.append(f"{i}:장소({picked[:24]})")
+                elif b.type == "video":
+                    try:
+                        picked = await insert_video(page, frame, b.raw)
+                        notes.append(f"{i}:영상({picked[:30]})")
+                    except EditorError as e:
+                        notes.append(f"{i}:영상 누락({e})")
+                    await _focus_tail(page, frame)
                 else:
                     await _fresh_line(page, frame)
                     await reset_style(page, frame)
@@ -1344,7 +1405,7 @@ def _to_plain(html: str) -> str:
 
 
 async def _type_block(page: Page, frame: Frame, b: Block) -> None:
-    if b.type in ("image", "file", "divider", "formula", "place"):
+    if b.type in ("image", "file", "divider", "formula", "place", "video"):
         return  # 키보드로 만들 수 없다 (write_post 가 툴바로 처리)
     if b.gap and b.type in ("heading", "paragraph"):
         await page.keyboard.press("Enter")  # 앞에 빈 줄 하나

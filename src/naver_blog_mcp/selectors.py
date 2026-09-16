@@ -177,6 +177,21 @@ FILE_POPUP_CLOSE = [".se-popup-file .se-popup-close-button", "button[data-log='l
 # 업로드 완료 판정. 이미지와 마찬가지로 개수 증가로 봐야 한다.
 FILE_COMPONENT = ["[data-a11y-title='파일']", ".se-component.se-file"]
 
+# ---------------------------------------------------------------- 유튜브 영상
+# 툴바 '링크'(oglink) 버튼 -> 주소 입력 -> Enter(검색) -> 미리보기 -> 확인.  [실측 2026-09-17]
+# 유튜브 주소면 링크 카드가 아니라 영상 플레이어(se-oembed)가 들어가고, 그 뒤에 빈 본문
+# 컴포넌트가 생긴다. 본문에 주소를 치고 Enter 를 쳐도 플레이어가 생기지만 주소 글자가
+# 한 줄 그대로 남으므로 그 길은 쓰지 않는다.
+OGLINK_BUTTON = ["button.se-oglink-toolbar-button", "button[data-name='oglink']"]
+OGLINK_INPUT = ["input.se-popup-oglink-input"]
+OGLINK_SEARCH = ["button.se-popup-oglink-button"]
+OGLINK_PREVIEW = [".se-popup-oglink-preview"]
+OGLINK_CONFIRM = [".se-popup-button-confirm"]
+OGLINK_CLOSE = [".se-popup-close-button"]
+VIDEO_COMPONENT = [".se-component.se-oembed"]
+VIDEO_YOUTUBE = ".se-oembed-youtube"
+VIDEO_TITLE = ".se-oembed-youtube-title"
+
 # 발행 패널 열기  [실측]
 # button:has-text('발행') 은 쓰지 말 것 — 숨김 상태인 "예약 발행 0건" 이 먼저 잡힌다.
 PUBLISH_OPEN = [

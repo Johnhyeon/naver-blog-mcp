@@ -46,9 +46,10 @@ DUMP = """
     : c.classList.contains('se-horizontalLine') ? 'hr'
     : c.classList.contains('se-image') ? 'image'
     : c.classList.contains('se-material') ? 'material'
+    : c.classList.contains('se-oembed') ? 'video'
     : c.classList.contains('se-documentTitle') ? 'title' : 'other';
-  if (kind === 'hr' || kind === 'material' || kind === 'image')
-    return [{kind, t: kind === 'material' ? c.innerText.split(String.fromCharCode(10)).join(' ') : '', style: c.className}];
+  if (kind === 'hr' || kind === 'material' || kind === 'image' || kind === 'video')
+    return [{kind, t: kind === 'image' || kind === 'hr' ? '' : c.innerText.split(String.fromCharCode(10)).join(' '), style: c.className}];
   return [...c.querySelectorAll('.se-text-paragraph')].map(p => {
     const t = p.innerText.split(String.fromCharCode(8203)).join('').trim();
     const flags = new Set();
@@ -110,9 +111,11 @@ async def main(args) -> int:
         glued = [seq[k]["t"][:20] for k in range(1, len(seq)) if seq[k]["t"] in headings and seq[k - 1]["kind"] != "hr"]
         links = [s for r in rows for s in r["style"].split() if s.startswith("L:")]
         want_links = len(re.findall(r"\]\(https?://", body))
+        videos = [r["t"][:30] for r in rows if r["kind"] == "video"]
+        want_videos = len(re.findall(r"^\s*:::\s*video\s", body, re.M))
         log("서식 이상:", bad or 0, "| 붙은 소제목:", glued or 0, "| 링크:", links,
             "| 그림:", sum(1 for r in rows if r["kind"] == "image"), "| 구분선:", sum(1 for r in rows if r["kind"] == "hr"),
-            "| 글감 카드:", sum(1 for r in rows if r["kind"] == "material"))
+            "| 글감 카드:", sum(1 for r in rows if r["kind"] == "material"), "| 영상:", videos)
 
         stop = []
         if bad:
@@ -124,6 +127,9 @@ async def main(args) -> int:
         if len(links) != want_links:
             log(f"링크 누락: 글에는 {want_links}개, 화면에는 {len(links)}개")
             stop.append("링크 누락")
+        if len(videos) != want_videos:
+            log(f"영상 누락: 글에는 {want_videos}개, 화면에는 {len(videos)}개")
+            stop.append("영상 누락")
         if any("누락" in n or "실패" in n for n in notes):
             stop.append("글쓰기 기록에 누락/실패")
 

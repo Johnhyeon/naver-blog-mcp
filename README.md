@@ -147,6 +147,7 @@ claude mcp add naver-blog \
 | `:::file 로컬경로:::` | 파일 첨부 (개당 10MB) |
 | `:::formula ...:::` | 수식 |
 | `:::place 검색어:::` | 장소 (검색 결과 첫 번째) |
+| `:::video 유튜브 주소:::` | 유튜브 영상 플레이어 (watch, youtu.be, shorts 주소만) |
 
 이미지·파일은 **로컬 경로만** 됩니다 (URL 불가).
 
