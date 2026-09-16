@@ -20,6 +20,7 @@ import argparse
 import asyncio
 import datetime as dt
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -108,6 +109,7 @@ async def main(args) -> int:
         seq = [r for r in rows if r["kind"] in ("hr", "text") and (r["kind"] == "hr" or r["t"])]
         glued = [seq[k]["t"][:20] for k in range(1, len(seq)) if seq[k]["t"] in headings and seq[k - 1]["kind"] != "hr"]
         links = [s for r in rows for s in r["style"].split() if s.startswith("L:")]
+        want_links = len(re.findall(r"\]\(https?://", body))
         log("서식 이상:", bad or 0, "| 붙은 소제목:", glued or 0, "| 링크:", links,
             "| 그림:", sum(1 for r in rows if r["kind"] == "image"), "| 구분선:", sum(1 for r in rows if r["kind"] == "hr"),
             "| 글감 카드:", sum(1 for r in rows if r["kind"] == "material"))
@@ -117,8 +119,11 @@ async def main(args) -> int:
             stop.append("서식 이상")
         if glued:
             stop.append("붙은 소제목")
-        if len(links) != len(meta.get("ref_codes", [])):
-            stop.append(f"링크 수 {len(links)} != ref_codes {len(meta.get('ref_codes', []))}")
+        if len([x for x in links if x != "L:undefined"]) != len(meta.get("ref_codes", [])):
+            stop.append(f"체험 링크 {len(links)} != ref_codes {len(meta.get('ref_codes', []))}")
+        if len(links) != want_links:
+            log(f"링크 누락: 글에는 {want_links}개, 화면에는 {len(links)}개")
+            stop.append("링크 누락")
         if any("누락" in n or "실패" in n for n in notes):
             stop.append("글쓰기 기록에 누락/실패")
 

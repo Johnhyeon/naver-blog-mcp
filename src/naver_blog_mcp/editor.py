@@ -737,6 +737,15 @@ async def apply_link(page: Page, frame: Frame, url: str) -> None:
     await inp.fill(url)
     await _click_toolbar(frame, S.LINK_APPLY, "링크 적용")
     await asyncio.sleep(0.4)
+    # 링크 입력 층이 닫힐 때까지 기다린다. 열린 채로 다음 줄을 치면 방금 건 링크 글자와
+    # 뒤 링크 줄이 통째로 사라졌다(2026-09-16 실측: 글 끝 링크 3개 중 3개 누락).
+    for _ in range(20):
+        if not await _any_visible(frame, S.LINK_INPUT):
+            break
+        await asyncio.sleep(0.15)
+    else:
+        await page.keyboard.press("Escape")
+        await asyncio.sleep(0.4)
 
 
 async def set_font_size(page: Page, frame: Frame, value: str) -> None:
@@ -797,6 +806,9 @@ async def type_spans(page: Page, frame: Frame, spans: list[Span]) -> None:
         if s.href:
             await apply_link(page, frame, s.href)
         await page.keyboard.press("ArrowRight")  # 선택 해제하고 커서를 끝으로
+        if s.href:
+            await page.keyboard.press("End")
+            await asyncio.sleep(0.3)
         if s.strike:
             await _clear_toggle(frame, S.STRIKE_BUTTON)
 
@@ -840,7 +852,16 @@ async def insert_image(page: Page, frame: Frame, path: str, caption: str = "") -
     # 캡션은 평소 0x0 으로 숨어 있다. 이미지 컴포넌트를 클릭해야 노출되고,
     # 노출된 뒤 캡션을 한 번 더 클릭해야 포커스가 들어간다. (2026-08-25 실측)
     # 컴포넌트만 클릭하고 타이핑하면 입력이 아무 데도 안 들어간다.
-    comps = await _locate_all(frame, S.IMAGE_COMPONENT)
+    # 업로드 직후 컴포넌트 목록을 잠깐 못 읽는 때가 있었다(2026-09-16, 2.4MB GIF 뒤 None 으로 전체가 죽음).
+    # 몇 번 다시 읽고, 끝내 못 읽으면 캡션만 실패로 돌린다.
+    comps = None
+    for _ in range(10):
+        comps = await _locate_all(frame, S.IMAGE_COMPONENT)
+        if comps is not None and await comps.count() > before:
+            break
+        await asyncio.sleep(0.5)
+    else:
+        return False
     comp = comps.nth(before)  # 방금 붙은 것
     try:
         await comp.click()
