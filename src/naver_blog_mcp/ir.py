@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import html
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Literal
@@ -122,8 +123,8 @@ def parse_markdown(md: str) -> list[Block]:
 
     def add(b: Block) -> None:
         # 앞에 빈 줄이 있었으면 표시한다. 첫 블록과 그림·파일 바로 뒤에는 붙이지 않는다.
-        # 그림 컴포넌트는 에디터가 위아래 간격을 이미 준다.
-        if gap[0] and blocks and blocks[-1].type not in ("image", "file"):
+        # 그림과 구분선 컴포넌트는 에디터가 위아래 간격을 이미 준다.
+        if gap[0] and blocks and blocks[-1].type not in ("image", "file", "divider"):
             b.gap = True
         gap[0] = False
         blocks.append(b)
@@ -340,6 +341,11 @@ def _has_link(b: Block) -> bool:
     return any(sp.href for item in b.items for sp in item)
 
 
+# 구분선 모양. 비워두면 <hr> 을 붙여넣어 긴 가는 선(line1)이 된다.
+# 값을 주면 툴바에서 그 모양을 골라 넣는다(예: line2 = 가운데 짧은 굵은 선).
+DIVIDER_STYLE = os.getenv("NAVER_DIVIDER_STYLE", "").strip()
+
+
 def is_paste_safe(b: Block) -> bool:
     """붙여넣기로 원형이 보존되는 블록인가.
 
@@ -354,6 +360,8 @@ def is_paste_safe(b: Block) -> bool:
     이 경우 링크만 사라진다. 알려진 한계다.
     """
     if b.type not in PASTE_SAFE:
+        return False
+    if b.type == "divider" and DIVIDER_STYLE:
         return False
     if b.type == "heading":
         # 링크 없는 제목은 붙여넣는다. 붙여넣은 제목의 굵게·크기가 다음 줄로 번지는

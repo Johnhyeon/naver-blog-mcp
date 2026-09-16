@@ -64,3 +64,15 @@ def test_underline_syntax():
     b = parse_markdown("공시 목록부터 ++직접 열어본다++\n")[0]
     assert any(s.underline and s.text == "직접 열어본다" for s in b.spans)
     assert "<u>직접 열어본다</u>" in block_html(b)
+
+
+def test_divider_style_goes_manual(monkeypatch=None):
+    import importlib, os
+    os.environ["NAVER_DIVIDER_STYLE"] = "line2"
+    import naver_blog_mcp.ir as ir
+    importlib.reload(ir)
+    segs = ir.segment(ir.parse_markdown("앞 문단\n\n---\n\n## 소제목\n"))
+    assert [s.kind for s in segs] == ["html", "manual", "html"]
+    assert segs[2].blocks[0].gap is False  # 구분선 바로 뒤 제목엔 빈 줄을 안 붙인다
+    os.environ.pop("NAVER_DIVIDER_STYLE")
+    importlib.reload(ir)

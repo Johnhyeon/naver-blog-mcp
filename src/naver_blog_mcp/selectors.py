@@ -119,6 +119,13 @@ BOLD_BUTTON = ["button[data-name='bold']"]
 ITALIC_BUTTON = ["button[data-name='italic']"]
 UNDERLINE_BUTTON = ["button[data-name='underline']"]
 
+# 구분선 모양 고르기(2026-09-16 실측). 옆 화살표로 메뉴를 열고 data-value 로 고른다.
+# default=짧은 선, line1=긴 가는 선, line2=가운데 짧은 굵은 선, line3=가운데 V,
+# line4=가운데 마름모, line5=점선, line6=사선, line7=세로선. 붙여넣은 <hr> 은 line1 이 된다.
+DIVIDER_MENU = ["button[data-name='horizontal-line'].se-document-toolbar-select-option-button"]
+DIVIDER_OPTION = ["button.se-toolbar-option-icon-button[data-name='horizontal-line'][data-value='{value}']"]
+DIVIDER_COMPONENT = [".se-component.se-horizontalLine"]
+
 # ---------------------------------------------------------------- 코드블록
 # 툴바 버튼으로만 만들 수 있다.  [실측]
 #  - 붙여넣기: <pre><code> 는 살균기가 지워서 문단으로 뭉개진다

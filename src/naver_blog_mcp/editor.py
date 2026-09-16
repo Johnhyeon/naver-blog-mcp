@@ -793,6 +793,21 @@ async def _file_count(frame: Frame) -> int:
     return await loc.count() if loc is not None else 0
 
 
+async def insert_divider(page: Page, frame: Frame, style: str) -> None:
+    """모양을 골라 구분선을 넣는다. 붙여넣은 <hr> 은 기본 모양(긴 가는 선)으로만 들어간다."""
+    before = await _count(frame, S.DIVIDER_COMPONENT)
+    opener = await S.first(frame, S.DIVIDER_MENU, timeout=4000)
+    if not opener:
+        raise EditorError("구분선 메뉴를 못 찾음 — selectors.DIVIDER_MENU 갱신 필요")
+    await opener.click()
+    await asyncio.sleep(0.4)
+    opt = await S.first(frame, S.DIVIDER_OPTION, timeout=4000, value=style)
+    if not opt:
+        raise EditorError(f"구분선 모양 {style} 을 못 찾음 — selectors.DIVIDER_OPTION 확인")
+    await opt.click()
+    await _wait_added(frame, S.DIVIDER_COMPONENT, before, "구분선")
+
+
 async def insert_code_block(page: Page, frame: Frame, code: str) -> None:
     """툴바 소스코드 버튼으로 코드블록을 만들고 내용을 채운다.
 
@@ -973,6 +988,11 @@ async def write_post(
                     await insert_formula(page, frame, b.raw)
                     await _focus_tail(page, frame)
                     notes.append(f"{i}:수식")
+                elif b.type == "divider":
+                    from .ir import DIVIDER_STYLE
+                    await insert_divider(page, frame, DIVIDER_STYLE or "line1")
+                    await _focus_tail(page, frame)
+                    notes.append(f"{i}:구분선({DIVIDER_STYLE})")
                 elif b.type == "place":
                     picked = await insert_place(page, frame, b.raw)
                     await _focus_tail(page, frame)
