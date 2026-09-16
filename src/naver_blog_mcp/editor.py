@@ -306,15 +306,25 @@ async def _inner(scope, candidates: list[str]) -> str:
         return ""
 
 
-def pick_draft(drafts: list[tuple[str, str]], title: str = "") -> int:
-    """발행할 글의 인덱스를 고른다. 브라우저 없이 검증할 수 있게 순수 함수로 뒀다.
+def pick_draft(drafts: list[tuple[str, str]], title: str = "", index: int | None = None) -> int:
+    """발행하거나 삭제할 글의 인덱스를 고른다. 브라우저 없이 검증할 수 있게 순수 함수로 뒀다.
 
-    발행은 되돌리기 어렵다. 조금이라도 애매하면 고르지 않고 예외를 던진다:
+    발행과 삭제는 되돌리기 어렵다. 조금이라도 애매하면 고르지 않고 예외를 던진다:
     제목이 여러 글과 맞거나, 제목 없이 호출됐는데 임시저장이 2건 이상이면 거부.
+
+    index 는 목록 순번(1 이 최신)이다. 같은 제목으로 여러 번 임시저장했을 때 쓴다.
+    title 을 같이 주면 그 순번의 제목이 맞는지 확인하고, 다르면 거부한다.
     """
     if not drafts:
         raise EditorError("임시저장된 글이 없습니다")
-    listing = "\n".join(f"  - {t} ({d})" for t, d in drafts)
+    listing = "\n".join(f"  {i}. {t} ({d})" for i, (t, d) in enumerate(drafts, 1))
+
+    if index is not None:
+        if not 1 <= index <= len(drafts):
+            raise EditorError(f"순번 {index} 는 범위 밖입니다(1~{len(drafts)}):\n{listing}")
+        if title and title not in drafts[index - 1][0]:
+            raise EditorError(f"순번 {index} 의 제목이 '{title}' 과 다릅니다: {drafts[index - 1][0]}")
+        return index - 1
 
     if not title:
         if len(drafts) > 1:
@@ -426,7 +436,7 @@ async def delete_post(page: Page, blog_id: str, url_or_log_no: str) -> str:
     return url
 
 
-async def delete_draft(page: Page, frame: Frame, title: str = "") -> str:
+async def delete_draft(page: Page, frame: Frame, title: str = "", index: int | None = None) -> str:
     """임시저장 글을 삭제한다. 삭제된 글의 제목을 반환. 복구되지 않는다.
 
     확인이 **네이티브 dialog** 로 뜬다 ("삭제된 글은 복구되지 않습니다").
@@ -436,7 +446,7 @@ async def delete_draft(page: Page, frame: Frame, title: str = "") -> str:
     대상 선택은 publish 와 같은 pick_draft 안전장치를 쓴다 (애매하면 거부).
     """
     drafts = await list_drafts(page, frame)
-    idx = pick_draft(drafts, title)
+    idx = pick_draft(drafts, title, index)
     target = drafts[idx][0]
 
     edit = await S.first(frame, S.DRAFT_EDIT_MODE, timeout=5000)

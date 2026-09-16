@@ -304,11 +304,13 @@ async def list_drafts() -> str:
 
 
 @guarded
-async def delete_draft(confirm: bool = False, title: str = "") -> str:
+async def delete_draft(confirm: bool = False, title: str = "", index: int = 0) -> str:
     """임시저장 글을 삭제한다. 복구되지 않으므로 confirm=True 를 명시해야 한다.
 
     title 규칙은 publish_draft 와 같다: 부분 일치 가능, 여러 글과 맞으면 거부,
     비워두면 임시저장이 정확히 1건일 때만 동작한다.
+    index 는 list_drafts 순번(1 이 최신)이다. 제목이 같은 글이 여러 개일 때 쓴다.
+    title 과 같이 주면 그 순번의 제목이 맞는지 확인하고 지운다.
     """
     if not confirm:
         return "삭제하려면 confirm=True 로 다시 호출하세요. 복구되지 않습니다."
@@ -316,7 +318,7 @@ async def delete_draft(confirm: bool = False, title: str = "") -> str:
         page = await ctx.new_page()
         try:
             frame = await goto_editor(page, BLOG_ID)
-            gone = await _delete_draft(page, frame, title)
+            gone = await _delete_draft(page, frame, title, index or None)
             left = await draft_count(frame)
         except EditorError as e:
             return f"삭제 실패: {e}"
