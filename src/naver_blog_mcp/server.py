@@ -34,6 +34,7 @@ from .editor import (
     read_categories,
     set_category,
     set_tags,
+    set_topic,
     set_visibility,
     title_is_empty,
     write_post,
@@ -139,7 +140,7 @@ async def create_draft(
     return await _draft(title, markdown, category, tags)
 
 
-async def _draft(title: str, markdown: str, category: str, tags: list[str] | None) -> str:
+async def _draft(title: str, markdown: str, category: str, tags: list[str] | None, topic: str = "") -> str:
     async with Session() as ctx:
         page = await ctx.new_page()
         try:
@@ -155,12 +156,15 @@ async def _draft(title: str, markdown: str, category: str, tags: list[str] | Non
         before = await draft_count(frame)
 
         # 카테고리/태그는 발행 레이어 안에만 있다. 열고, 설정하고, 다시 닫는다.
-        if category or tags:
+        topic = topic or os.environ.get("NAVER_TOPIC", "")
+        if category or tags or topic:
             try:
                 await open_publish_panel(page, frame)
                 if category:
                     await set_category(page, frame, category)
                     notes.append(f"카테고리={category}")
+                if topic:
+                    notes.append(f"주제={await set_topic(page, frame, topic)}")
                 if tags:
                     n = await set_tags(page, frame, tags)
                     notes.append(f"태그 {n}개")
@@ -278,12 +282,13 @@ async def create_draft_from_folder(
     title = title or meta.get("title") or head_title
     category = category or meta.get("category", "")
     tags = tags or meta.get("tags") or None
+    topic = meta.get("topic", "")
     if not title:
         return "제목이 없습니다 — 인자로 주거나 글 첫 줄에 '# 제목' 을 두세요."
     body, problems = preflight(base, body)
     if problems:
         return "넣기 전에 걸린 것 (아무것도 하지 않았습니다):\n- " + "\n- ".join(problems)
-    return await _draft(title, body, category, tags)
+    return await _draft(title, body, category, tags, topic)
 
 
 @mcp.tool()

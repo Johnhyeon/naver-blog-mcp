@@ -239,6 +239,15 @@ VISIBILITY = {
     "private": ["#open_private"],
 }
 
+# 주제(블로그 홈 주제별 글보기 분류)  [실측 2026-09-16]
+# 발행 레이어 안 "주제" 줄의 링크를 누르면 "주제 설정" 층이 뜬다. 라디오 id 는 "이름_번호"
+# (예: 문학·책_5) 라 이름은 label 글자로 맞춘다. 층 아래 "이 카테고리의 글은 항상 이 주제로
+# 분류" 체크는 카테고리 설정을 바꾸므로 건드리지 않는다.
+TOPIC_OPEN = ["a[data-click-area='tpb*i.subject']", "a[aria-label='주제 목록 버튼']"]
+TOPIC_CURRENT = "a[data-click-area='tpb*i.subject'] span"
+TOPIC_RADIO = "input[data-click-area='tpb*i.subjectlist']"
+TOPIC_OK = ["button[data-click-area='tpb*i.subjectok']", "button[class*='ok_btn']"]
+
 # 태그 입력  [실측]
 # 주의: 카테고리와 마찬가지로 발행 레이어 안에만 존재한다.
 TAG_INPUT = ["input#tag-input", "input[placeholder*='태그']"]

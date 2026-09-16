@@ -4,7 +4,8 @@
     uv run python scripts/draft_folder.py <글 폴더> --reserve "2026-09-17 06:30"            # 예약 발행
     uv run python scripts/draft_folder.py <글 폴더> --reserve "2026-09-17 06:30" --dry-run  # 발행 버튼 직전까지
 
-환경변수: NAVER_BLOG_ID(필수), NAVER_DIVIDER_STYLE(line2 권장), NAVER_KEEP_OPEN(사람이 볼 때만 1)
+환경변수: NAVER_BLOG_ID(필수), NAVER_DIVIDER_STYLE(line2 권장), NAVER_KEEP_OPEN(사람이 볼 때만 1),
+NAVER_TOPIC(주제, 기본 비즈니스·경제. meta.json 의 topic 이 우선)
 
 예약 발행은 아래 점검을 전부 통과해야만 한다. 하나라도 걸리면 임시저장만 남기고 멈춘다.
 - 서식 이상 0, 구분선 없이 붙은 소제목 0, 체험 링크 수가 meta.json ref_codes 수와 같음
@@ -28,7 +29,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from naver_blog_mcp import selectors as S  # noqa: E402
 from naver_blog_mcp.editor import (  # noqa: E402
     EditorError, close_draft_list, close_publish_panel, delete_draft, draft_count, get_editor_frame, goto_editor,
-    list_drafts, open_publish_panel, reserved_count, set_category, set_reservation, set_tags, set_visibility,
+    list_drafts, open_publish_panel, reserved_count, set_category, set_reservation, set_tags, set_topic,
+    set_visibility,
     write_post,
 )
 from naver_blog_mcp.server import preflight, read_meta, split_title  # noqa: E402
@@ -127,6 +129,13 @@ async def main(args) -> int:
         except Exception as e:
             stop.append("카테고리")
             log("카테고리 못 넣음:", meta["category"], "|", e)
+        topic = meta.get("topic") or os.environ.get("NAVER_TOPIC", "")
+        if topic:
+            try:
+                log("주제:", await set_topic(page, frame, topic))
+            except Exception as e:
+                stop.append("주제")
+                log("주제 못 넣음:", topic, "|", e)
         n = await set_tags(page, frame, meta["tags"])
         await close_publish_panel(page, frame)
         if args.dry_run:
@@ -204,4 +213,6 @@ if __name__ == "__main__":
     ap.add_argument("--reserve", help="예약 발행 시각 KST, 'YYYY-MM-DD HH:MM' (분은 10분 단위)")
     ap.add_argument("--dry-run", action="store_true", help="예약 값까지 맞추고 발행 버튼은 누르지 않는다")
     os.environ.setdefault("NAVER_BLOG_ID", "leetkey_lab")
+    # 리트키랩 연구소 글은 전부 블로그 홈 주제 '비즈니스·경제'로 분류한다(대표 2026-09-16)
+    os.environ.setdefault("NAVER_TOPIC", "비즈니스·경제")
     sys.exit(asyncio.run(main(ap.parse_args())))

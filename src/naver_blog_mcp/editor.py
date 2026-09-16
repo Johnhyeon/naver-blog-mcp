@@ -228,6 +228,51 @@ async def set_visibility(page: Page, frame: Frame, level: str) -> None:
     raise EditorError(f"공개 설정 '{level}' 을 못 찾음 — selectors.VISIBILITY 갱신 필요")
 
 
+async def read_topic(frame: Frame) -> str | None:
+    """발행 레이어에 지금 보이는 주제 이름. 못 읽으면 None."""
+    try:
+        return (await frame.locator(S.TOPIC_CURRENT).first.inner_text(timeout=2000)).strip()
+    except Exception:
+        return None
+
+
+async def set_topic(page: Page, frame: Frame, name: str) -> str:
+    """발행 설정의 주제를 고른다(예: "비즈니스·경제"). 고른 뒤 화면에 보이는 주제를 돌려준다.
+
+    새 글쓰기 화면은 주제 칸에 블로그 기본 주제를 보여주지만, 불러온 임시저장 글 등에서는
+    선택이 빠진 채 발행된 적이 있다(2026-09-16 대표 확인). 그래서 매번 명시적으로 고른다.
+    """
+    await open_publish_panel(page, frame)
+    opener = await S.first(frame, S.TOPIC_OPEN)
+    if not opener:
+        raise EditorError("주제 버튼을 못 찾음 — selectors.TOPIC_OPEN 갱신 필요")
+    await opener.click()
+    await asyncio.sleep(0.8)
+    picked = await frame.evaluate(
+        """([sel, name]) => {
+            for (const input of document.querySelectorAll(sel)) {
+                const label = document.querySelector(`label[for="${CSS.escape(input.id)}"]`);
+                if (label && label.textContent.trim() === name) { input.click(); return true; }
+            }
+            return false;
+        }""",
+        [S.TOPIC_RADIO, name],
+    )
+    if not picked:
+        await page.keyboard.press("Escape")
+        await asyncio.sleep(0.5)
+        raise EditorError(f"주제 '{name}' 을 목록에서 못 찾음")
+    ok = await S.first(frame, S.TOPIC_OK)
+    if not ok:
+        raise EditorError("주제 확인 버튼을 못 찾음 — selectors.TOPIC_OK 갱신 필요")
+    await ok.click()
+    await asyncio.sleep(0.8)
+    now = await read_topic(frame)
+    if now != name:
+        raise EditorError(f"주제를 '{name}' 로 골랐는데 화면에는 '{now}'")
+    return now
+
+
 async def set_tags(page: Page, frame: Frame, tags: list[str]) -> int:
     """태그를 입력한다. 입력란은 발행 레이어 안에만 있다. 넣은 개수를 돌려준다."""
     await open_publish_panel(page, frame)
