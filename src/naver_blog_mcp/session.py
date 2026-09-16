@@ -42,6 +42,26 @@ def _has_auth_cookies(path: Path) -> bool:
     return any(n in names for n in AUTH_COOKIES)
 
 
+async def snapshot(ctx: BrowserContext) -> None:
+    """지금 쿠키를 즉시 파일에 남긴다.
+
+    네이버는 접속할 때마다 세션 쿠키를 갱신하고 옛 값을 버린다. 긴 작업 도중
+    프로세스가 죽으면 갱신분이 저장되지 않아, 다음 실행이 이미 죽은 쿠키를 들고
+    로그인 화면으로 튕긴다 (2026-09-16 실측: 멈춘 실행을 강제 종료한 뒤 로그아웃됨).
+    그래서 글쓰기처럼 오래 걸리는 작업 앞에서 한 번 저장해 둔다.
+    """
+    try:
+        tmp = STATE.with_suffix(STATE.suffix + ".tmp")
+        await ctx.storage_state(path=str(tmp))
+        if _has_auth_cookies(tmp):
+            os.replace(tmp, STATE)
+            save_state_file(STATE)
+        else:
+            tmp.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
 class Session:
     def __init__(self, headless: bool | None = None):
         self.headless = headless if headless is not None else os.getenv("HEADLESS", "false") == "true"

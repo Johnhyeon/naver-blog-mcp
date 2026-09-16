@@ -530,8 +530,20 @@ async def paste_html(page: Page, frame: Frame, html: str, plain: str) -> None:
     다시 클릭하면 커서가 클릭 지점(글 중간)에 놓여 내용이 뒤섞인다.
 
     권한: context 생성 시 clipboard-read/write 를 grant 해야 한다 (session.py 참조).
+
+    창이 뒤에 있으면 navigator.clipboard.write 가 거부도 아니고 그냥 안 끝난다.
+    사람이 다른 창을 쓰는 동안 돌리면 여기서 영원히 멈춘다(2026-09-16 실측: 제목만
+    써진 채 17분 정지). 그래서 창을 앞으로 끌어오고, 그래도 안 끝나면 끊어서
+    호출부가 타이핑 경로로 넘어가게 한다.
     """
-    await page.evaluate(_CLIPBOARD_JS, [html, plain])
+    try:
+        await page.bring_to_front()
+    except Exception:
+        pass
+    try:
+        await asyncio.wait_for(page.evaluate(_CLIPBOARD_JS, [html, plain]), timeout=5)
+    except asyncio.TimeoutError as e:
+        raise EditorError("클립보드 쓰기 5초 초과 — 창이 뒤에 있거나 권한 문제") from e
     await page.keyboard.press("ControlOrMeta+V")
     await asyncio.sleep(0.6)
 

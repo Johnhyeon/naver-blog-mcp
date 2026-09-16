@@ -38,7 +38,7 @@ from .editor import (
     title_is_empty,
     write_post,
 )
-from .session import Session
+from .session import Session, snapshot
 
 mcp = MCPServer("naver-blog")
 BLOG_ID = os.getenv("NAVER_BLOG_ID", "")
@@ -144,6 +144,8 @@ async def _draft(title: str, markdown: str, category: str, tags: list[str] | Non
         page = await ctx.new_page()
         try:
             await goto_editor(page, BLOG_ID)
+            # 글쓰기는 몇 분씩 걸린다. 도중에 죽어도 갱신된 쿠키가 남게 여기서 한 번 저장.
+            await snapshot(ctx)
             # 세그먼트별로 붙여넣기/타이핑 중 무엇을 썼는지 돌려준다.
             notes = await write_post(page, title, markdown)
         except EditorError as e:
