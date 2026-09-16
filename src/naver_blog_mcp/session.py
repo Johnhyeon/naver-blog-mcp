@@ -6,6 +6,7 @@ login_setup.py 로 사람이 직접 로그인 -> storage_state.json 에 쿠키�
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from pathlib import Path
@@ -60,6 +61,23 @@ async def snapshot(ctx: BrowserContext) -> None:
             tmp.unlink(missing_ok=True)
     except Exception:
         pass
+
+
+def keep_open_seconds() -> float:
+    """NAVER_KEEP_OPEN 을 초로 바꾼다. 빈 값이면 0(끝나면 바로 닫음).
+
+    사람이 결과를 눈으로 확인하려면 창이 남아 있어야 한다. 1 이나 true 면 10분,
+    숫자를 주면 그 초만큼 기다린다. 창을 먼저 닫으면 그 즉시 끝난다.
+    """
+    v = os.getenv("NAVER_KEEP_OPEN", "").strip().lower()
+    if v in ("", "0", "false", "no"):
+        return 0.0
+    if v in ("1", "true", "yes"):
+        return 600.0
+    try:
+        return max(0.0, float(v))
+    except ValueError:
+        return 600.0
 
 
 class Session:
@@ -117,8 +135,28 @@ class Session:
                     tmp.unlink(missing_ok=True)
             except Exception:
                 pass
-            await self.ctx.close()
+            await self._hold_window()
+            try:
+                await self.ctx.close()
+            except Exception:
+                pass
         await self._cleanup()
+
+    async def _hold_window(self) -> None:
+        """NAVER_KEEP_OPEN 이 켜져 있으면 사람이 창을 닫을 때까지 기다린다.
+
+        쿠키를 저장한 뒤에 기다린다. 사람이 창을 먼저 닫아도 세션은 이미 남아 있다.
+        """
+        wait = keep_open_seconds()
+        if not wait or self.ctx is None:
+            return
+        print(f"창을 열어뒀습니다. 확인이 끝나면 창을 닫으세요 (최대 {wait / 60:.0f}분)", flush=True)
+        loop = asyncio.get_event_loop()
+        deadline = loop.time() + wait
+        while loop.time() < deadline:
+            if not self.ctx.pages or not (self._browser and self._browser.is_connected()):
+                return
+            await asyncio.sleep(1.0)
 
     async def _cleanup(self) -> None:
         if self._browser:
