@@ -901,6 +901,54 @@ async def _image_count(frame: Frame) -> int:
     return await loc.count() if loc is not None else 0
 
 
+async def set_rep_image(page: Page, frame: Frame, index: int = 0) -> bool:
+    """index 번째 본문 이미지를 대표 이미지로 지정한다. 지정됐으면 True.
+
+    대표 이미지는 검색 결과와 블로그 목록의 섬네일이다. 네이버는 **본문에 들어간
+    이미지 중에서만** 고르게 한다 — 따로 올리는 칸이 없다. 그래서 표지 파일을
+    쓰려면 본문에 넣은 뒤 그 이미지의 "대표" 버튼을 눌러야 한다. (2026-09-18 실측)
+
+    첫 이미지가 기본 대표라서 index=0 이면 대개 이미 눌려 있다. 그때는 누르지 않고
+    True 를 돌려준다. 이미 지정된 것을 다시 누르면 해제되기 때문이다.
+    """
+    btns = await _locate_all(frame, S.REP_IMAGE_BUTTON)
+    if btns is None:
+        return False
+    n = await btns.count()
+    if n <= index:
+        return False
+    btn = btns.nth(index)
+
+    async def selected() -> bool:
+        cls = await btn.get_attribute("class") or ""
+        return S.REP_IMAGE_SELECTED in cls
+
+    if await selected():
+        return True
+    try:
+        await btn.scroll_into_view_if_needed(timeout=5000)
+        await btn.click()
+    except Exception:
+        return False
+    for _ in range(10):
+        await asyncio.sleep(0.3)
+        if await selected():
+            return True
+    return False
+
+
+async def rep_image_index(frame: Frame) -> int | None:
+    """지금 대표로 지정된 이미지가 몇 번째인지. 없으면 None."""
+    btns = await _locate_all(frame, S.REP_IMAGE_BUTTON)
+    if btns is None:
+        return None
+    for i in range(await btns.count()):
+        cls = await btns.nth(i).get_attribute("class") or ""
+        if S.REP_IMAGE_SELECTED in cls:
+            return i
+    return None
+
+
 async def insert_file(page: Page, frame: Frame, path: str) -> None:
     """툴바 파일 버튼 -> '내 컴퓨터' -> 파일 다이얼로그 가로채기.
 
@@ -1259,7 +1307,16 @@ async def write_post(
     markdown: str,
     *,
     prefer_paste: bool = True,
+    cover: str | None = None,
 ) -> list[str]:
+    """cover 를 주면 본문 맨 앞에 그 그림을 넣는다(대표 이미지용).
+
+    네이버는 본문 이미지 중에서만 대표를 고를 수 있어서, 표지를 섬네일로 쓰려면
+    본문에 들어가 있어야 한다. 맨 앞에 넣으면 첫 이미지가 되어 기본 대표가 된다.
+    지정 자체는 호출부가 set_rep_image 로 한 번 더 확인한다.
+    캡션은 넣지 않는다 — 표지에는 글자가 이미 그려져 있어서 아래에 한 줄 더 붙으면
+    제목이 두 번 나온다.
+    """
     frame = await get_editor_frame(page)
     await dismiss_popups(frame)
     notes: list[str] = []
@@ -1275,6 +1332,15 @@ async def write_post(
     if body_loc is None:
         raise EditorError("본문 영역을 못 찾음 — selectors.BODY 갱신 필요")
     await body_loc.click()  # 최초 1회만 클릭. 이후에는 커서를 그대로 이어 쓴다.
+
+    if cover:
+        # 표지가 안 올라가도 글 전체를 날리지는 않는다. 기록만 남기고 본문을 계속 쓴다.
+        try:
+            await insert_image(page, frame, cover, "")
+            notes.append("0:표지")
+        except EditorError as e:
+            notes.append(f"0:표지 넣기 실패({e})")
+        await _focus_tail(page, frame)
 
     for i, seg in enumerate(segment(blocks), 1):
         if seg.kind in ("image", "file"):
