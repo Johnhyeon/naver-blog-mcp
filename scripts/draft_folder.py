@@ -5,11 +5,17 @@
     uv run python scripts/draft_folder.py <글 폴더> --reserve "2026-09-17 06:30" --dry-run  # 발행 버튼 직전까지
 
 환경변수: NAVER_BLOG_ID(필수), NAVER_DIVIDER_STYLE(line2 권장), NAVER_KEEP_OPEN(사람이 볼 때만 1),
-NAVER_TOPIC(주제, 기본 비즈니스·경제. meta.json 의 topic 이 우선)
+NAVER_TOPIC(주제, 기본 비즈니스·경제. meta.json 의 topic 이 우선),
+NAVER_COVER(대표 이미지로 쓸 표지 파일. 기본은 images/00-cover.*, 0/off 면 넣지 않음)
+
+표지(`images/00-cover.png`)가 있으면 본문 맨 앞에 넣고 대표 이미지로 지정한다.
+네이버는 본문에 들어간 이미지 중에서만 대표를 고르게 해서, 따로 올릴 방법이 없다.
+본문이 이미 그 파일을 쓰고 있으면 두 번 넣지 않는다.
 
 예약 발행은 아래 점검을 전부 통과해야만 한다. 하나라도 걸리면 임시저장만 남기고 멈춘다.
 - 서식 이상 0, 구분선 없이 붙은 소제목 0, 체험 링크 수가 meta.json ref_codes 수와 같음
 - 글쓰기 기록에 '누락', '실패' 없음
+- 표지가 있으면 대표 이미지로 지정됨
 - 예약 시각이 지금보다 15분 넘게 뒤
 - 발행 레이어의 예약 날짜, 시, 분이 화면에서 정확히 그 값
 발행 뒤에는 '예약 발행 N건' 숫자가 1 늘었는지 확인한다.
@@ -30,11 +36,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from naver_blog_mcp import selectors as S  # noqa: E402
 from naver_blog_mcp.editor import (  # noqa: E402
     EditorError, close_draft_list, close_publish_panel, delete_draft, draft_count, get_editor_frame, goto_editor,
-    list_drafts, open_publish_panel, reserved_count, set_category, set_reservation, set_tags, set_topic,
+    list_drafts, open_publish_panel, rep_image_index, reserved_count, set_category,
+    set_reservation, set_rep_image, set_tags, set_topic,
     set_visibility,
     write_post,
 )
-from naver_blog_mcp.server import preflight, read_meta, split_title  # noqa: E402
+from naver_blog_mcp.server import find_cover, preflight, read_meta, split_title  # noqa: E402
 from naver_blog_mcp.session import Session, snapshot  # noqa: E402
 
 KST = dt.timezone(dt.timedelta(hours=9))
@@ -75,6 +82,7 @@ async def main(args) -> int:
     head_title, body = split_title((folder / "post.md").read_text(encoding="utf-8"))
     meta = read_meta(folder)
     title = meta.get("title") or head_title
+    cover = find_cover(folder, body)
     body, problems = preflight(folder, body)
     if problems:
         log("사전 확인 실패:", problems)
@@ -93,8 +101,12 @@ async def main(args) -> int:
         page = await ctx.new_page()
         await goto_editor(page, os.environ["NAVER_BLOG_ID"])
         await snapshot(ctx)
-        notes = await write_post(page, title, body)
+        notes = await write_post(page, title, body, cover=str(cover) if cover else None)
         frame = await get_editor_frame(page)
+        # 표지를 본문 맨 앞에 넣었으면 그것을 대표 이미지로 굳힌다. 첫 이미지가 기본
+        # 대표라 대개 이미 지정돼 있지만, 기본값에 기대지 않고 확인한다.
+        rep_ok = await set_rep_image(page, frame, 0) if cover else None
+        rep_at = await rep_image_index(frame)
         rows = await frame.evaluate(DUMP)
         log(f"작성 {time.time() - t0:.0f}초 | 기록 중 확인할 것:", [n for n in notes if "글감" in n or "누락" in n or "실패" in n])
 
@@ -116,6 +128,8 @@ async def main(args) -> int:
         log("서식 이상:", bad or 0, "| 붙은 소제목:", glued or 0, "| 링크:", links,
             "| 그림:", sum(1 for r in rows if r["kind"] == "image"), "| 구분선:", sum(1 for r in rows if r["kind"] == "hr"),
             "| 글감 카드:", sum(1 for r in rows if r["kind"] == "material"), "| 영상:", videos)
+        log("표지:", cover.name if cover else "없음",
+            "| 대표 이미지:", "못 지정" if rep_ok is False else (f"{rep_at}번째 그림" if rep_at is not None else "없음"))
 
         stop = []
         if bad:
@@ -132,6 +146,8 @@ async def main(args) -> int:
             stop.append("영상 누락")
         if any("누락" in n or "실패" in n for n in notes):
             stop.append("글쓰기 기록에 누락/실패")
+        if cover and not rep_ok:
+            stop.append("대표 이미지 지정")
 
         before = await draft_count(frame)
         await open_publish_panel(page, frame)

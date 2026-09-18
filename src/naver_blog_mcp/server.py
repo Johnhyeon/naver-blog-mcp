@@ -33,6 +33,7 @@ from .editor import (
     open_publish_panel,
     read_categories,
     set_category,
+    set_rep_image,
     set_tags,
     set_topic,
     set_visibility,
@@ -141,7 +142,8 @@ async def create_draft(
     return await _draft(title, markdown, category, tags)
 
 
-async def _draft(title: str, markdown: str, category: str, tags: list[str] | None, topic: str = "") -> str:
+async def _draft(title: str, markdown: str, category: str, tags: list[str] | None, topic: str = "",
+                 cover: str | None = None) -> str:
     async with Session() as ctx:
         page = await ctx.new_page()
         try:
@@ -149,11 +151,13 @@ async def _draft(title: str, markdown: str, category: str, tags: list[str] | Non
             # 글쓰기는 몇 분씩 걸린다. 도중에 죽어도 갱신된 쿠키가 남게 여기서 한 번 저장.
             await snapshot(ctx)
             # 세그먼트별로 붙여넣기/타이핑 중 무엇을 썼는지 돌려준다.
-            notes = await write_post(page, title, markdown)
+            notes = await write_post(page, title, markdown, cover=cover)
         except EditorError as e:
             return f"작성 실패: {e}"
 
         frame = await get_editor_frame(page)
+        if cover:
+            notes.append("대표 지정" if await set_rep_image(page, frame, 0) else "대표 지정 실패")
         before = await draft_count(frame)
 
         # 카테고리/태그는 발행 레이어 안에만 있다. 열고, 설정하고, 다시 닫는다.
@@ -240,6 +244,48 @@ def split_title(markdown: str) -> tuple[str, str]:
     return "", markdown
 
 
+COVER_STEMS = ("00-cover",)
+COVER_EXTS = ("png", "jpg", "jpeg", "gif")
+
+
+def find_cover(folder: Path, markdown: str = "") -> Path | None:
+    """대표 이미지(검색 결과 섬네일)로 쓸 표지 파일. 없으면 None.
+
+    기본은 관례대로 `images/00-cover.*`. NAVER_COVER 로 다른 파일을 지정하거나
+    (0/off/no/false 로) 끌 수 있다.
+
+    본문이 이미 그 파일을 참조하고 있으면 None 을 돌려준다. 안 그러면 같은 그림이
+    두 번 들어간다.
+    """
+    raw = os.getenv("NAVER_COVER", "").strip()
+    if raw.lower() in {"0", "off", "no", "false"}:
+        return None
+    if raw:
+        cand = _abs_local(folder, raw)
+        found = cand if cand.exists() else None
+    else:
+        found = None
+        for stem in COVER_STEMS:
+            for ext in COVER_EXTS:
+                cand = folder / "images" / f"{stem}.{ext}"
+                if cand.exists():
+                    found = cand
+                    break
+            if found:
+                break
+    if found is None:
+        return None
+    if markdown:
+        for m in _IMG_RE.finditer(markdown):
+            ref = _abs_local(folder, m.group(2))
+            try:
+                if ref.resolve() == found.resolve():
+                    return None
+            except OSError:
+                pass
+    return found
+
+
 def read_meta(folder: Path) -> dict:
     """meta.json 에서 제목·카테고리·태그·주제·유입 코드를 읽는다. 없거나 깨졌으면 빈 값.
 
@@ -293,10 +339,12 @@ async def create_draft_from_folder(
     topic = meta.get("topic", "")
     if not title:
         return "제목이 없습니다 — 인자로 주거나 글 첫 줄에 '# 제목' 을 두세요."
+    cover = find_cover(base, body)
     body, problems = preflight(base, body)
     if problems:
         return "넣기 전에 걸린 것 (아무것도 하지 않았습니다):\n- " + "\n- ".join(problems)
-    return await _draft(title, body, category, tags, topic)
+    return await _draft(title, body, category, tags, topic,
+                        str(cover) if cover else None)
 
 
 @mcp.tool()
