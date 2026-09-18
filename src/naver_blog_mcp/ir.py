@@ -107,6 +107,29 @@ _TABLE_SEP = re.compile(r"^\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)*\|?$")
 _HEADING = re.compile(r"^(#{1,6})\s+(.*)$")
 
 
+# 표 색 (2026-09-18 실측)
+#
+# 스마트에디터 표는 셀의 **배경색과 테두리, 굵게만** 살린다. 글자색은 죽는다 —
+# style="color:", <span style="color:">, <font color=""> 셋 다 검정으로 돌아온다.
+# 그래서 charts.py 의 그림 표처럼 "검정 헤더 + 흰 글자" 를 쓸 수 없다.
+# 밝은 배경에 검정 글자로만 층을 만든다: 헤더가 제일 진하고, 기준 열(첫 열)이
+# 그다음, 나머지 셀은 흰 배경.
+#
+# 색은 leetkey-blog RULES A8 팔레트 안에서 고른다.
+#   #E2DDD0 웜 그레이 / #F7F4EC 웜화이트 / #8A8A8A 선에만 쓰는 회색
+# NAVER_TABLE_STYLE=off 로 끄면 예전처럼 스타일 없는 <table> 이 된다.
+TABLE_HEAD_BG = "#E2DDD0"
+TABLE_KEY_BG = "#F7F4EC"
+TABLE_LINE = "#8A8A8A"
+
+
+def _table_colors() -> tuple[str, str, str] | None:
+    """끄면 None. 그때는 예전처럼 스타일 속성이 아예 없는 <table> 을 만든다."""
+    if os.getenv("NAVER_TABLE_STYLE", "").strip().lower() in {"off", "0", "no", "false"}:
+        return None
+    return TABLE_HEAD_BG, TABLE_KEY_BG, TABLE_LINE
+
+
 def _table_cells(line: str) -> list[list[Span]]:
     """한 행을 셀 단위 스팬 리스트로. 양끝 파이프는 있어도 없어도 된다."""
     return [parse_inline(c.strip()) for c in line.strip().strip("|").split("|")]
@@ -310,13 +333,32 @@ def _block_html(b: Block) -> str:
         )
         return f"<{tag}>{lis}</{tag}>"
     if b.type == "table":
-        def _row(cells, tag):
+        colors = _table_colors()
+
+        def _cell(c, tag, *, bg=""):
+            inner = "".join(_span_html(s) for s in c)
+            if colors is None:
+                return f"<{tag}>{inner}</{tag}>"
+            style = f"border:1px solid {colors[2]};padding:6px"
+            if bg:
+                style += f";background-color:{bg}"
+                # 헤더와 기준 열은 굵게. 굵게는 붙여넣기에서 살아남는다
+                inner = f"<b>{inner}</b>"
+            return f'<{tag} style="{style}">{inner}</{tag}>'
+
+        def _row(cells, tag, *, head=False):
+            bg_of = (lambda i: "") if colors is None else (
+                (lambda i: colors[0]) if head else (lambda i: colors[1] if i == 0 else "")
+            )
             return "<tr>" + "".join(
-                f"<{tag}>" + "".join(_span_html(s) for s in c) + f"</{tag}>" for c in cells
+                _cell(c, tag, bg=bg_of(i)) for i, c in enumerate(cells)
             ) + "</tr>"
-        head = f"<thead>{_row(b.rows[0], 'th')}</thead>" if b.header and b.rows else ""
+
+        head = f"<thead>{_row(b.rows[0], 'th', head=True)}</thead>" if b.header and b.rows else ""
         body = b.rows[1:] if b.header else b.rows
-        return f"<table>{head}<tbody>{''.join(_row(r, 'td') for r in body)}</tbody></table>"
+        rows = "".join(_row(r, "td") for r in body)
+        table_style = "" if colors is None else ' style="border-collapse:collapse"'
+        return f"<table{table_style}>{head}<tbody>{rows}</tbody></table>"
     inner = "".join(_span_html(s) for s in b.spans)
     return f"<p>{inner}</p>"
 

@@ -103,3 +103,39 @@ def test_divider_style_goes_manual(monkeypatch=None):
     assert segs[2].blocks[0].gap is False  # 구분선 바로 뒤 제목엔 빈 줄을 안 붙인다
     os.environ.pop("NAVER_DIVIDER_STYLE")
     importlib.reload(ir)
+
+MD_TABLE = """| 구분 | 9월 17일 |
+|---|---|
+| 외국인 | -2,170,687 |
+"""
+
+
+def test_table_colors_head_and_key_column():
+    """표는 배경색·선·굵게만 살아남는다(2026-09-18 실측). 글자색은 죽는다."""
+    from naver_blog_mcp.ir import block_html, parse_markdown, TABLE_HEAD_BG, TABLE_KEY_BG, TABLE_LINE
+    html = block_html(parse_markdown(MD_TABLE)[0])
+    # 헤더 행은 진한 배경 + 굵게
+    assert f"background-color:{TABLE_HEAD_BG}" in html
+    assert "<th" in html and "<b>구분</b>" in html
+    # 기준 열(첫 열)은 연한 배경 + 굵게
+    assert f"background-color:{TABLE_KEY_BG}" in html
+    assert "<b>외국인</b>" in html
+    # 선은 모든 셀에
+    assert html.count(f"border:1px solid {TABLE_LINE}") == 4
+    # 값 셀은 배경도 굵게도 없다
+    assert "<b>-2,170,687</b>" not in html
+    # 살아남지 않는 글자색은 아예 넣지 않는다
+    assert "color:#" not in html.replace("background-color:#", "")
+
+
+def test_table_style_can_be_turned_off():
+    import importlib, os
+    os.environ["NAVER_TABLE_STYLE"] = "off"
+    import naver_blog_mcp.ir as ir
+    importlib.reload(ir)
+    html = ir.block_html(ir.parse_markdown(MD_TABLE)[0])
+    assert html.startswith("<table>")
+    assert "style=" not in html
+    assert "<b>" not in html
+    os.environ.pop("NAVER_TABLE_STYLE")
+    importlib.reload(ir)
