@@ -65,7 +65,12 @@ DUMP = """
       if (s.querySelector('b')) flags.add('B');
       if (s.querySelector('i')) flags.add('I');
       if (s.querySelector('u')) flags.add('U');
-      if (s.classList.contains('se-link')) flags.add('L:' + (s.getAttribute('data-href') || '').split('ref=')[1]);
+      if (s.classList.contains('se-link')) {
+        const h = s.getAttribute('data-href') || '';
+        // 유입 코드는 두 모양으로 온다: ...apply?ref={코드} 와 leetkey.kr/l|r|y/{코드}
+        const m = h.match(/[?&]ref=([^&#]+)/) || h.match(/leetkey\.kr\/(?:l|r|y)\/([^/?#]+)/);
+        flags.add('L:' + (m ? m[1] : undefined));
+      }
     }
     return {kind, t, style: [...flags].join(' ')};
   });
