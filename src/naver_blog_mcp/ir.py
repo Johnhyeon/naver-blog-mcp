@@ -130,6 +130,32 @@ def _table_colors() -> tuple[str, str, str] | None:
     return TABLE_HEAD_BG, TABLE_KEY_BG, TABLE_LINE
 
 
+def _cell_width(cells: list[list[Span]]) -> int:
+    """셀 글자 폭. 한글과 전각은 2, 나머지는 1로 센다."""
+    text = "".join(sp.text for sp in cells)
+    return sum(2 if ord(ch) > 0x2E80 else 1 for ch in text)
+
+
+def _col_plan(rows: list[list[list[Span]]]) -> list[str]:
+    """열마다 너비(%). 열에서 가장 긴 글자 폭으로 나눈다.
+
+    스마트에디터는 열을 1:1 로 잡는다. 순서 칸에 숫자 하나가 들어가는 표가
+    긴 설명 칸과 같은 너비를 차지해 헐렁해 보였다(대표 2026-09-23 아침 브리핑 글).
+    짧은 칸(숫자, 기호, 짧은 이름)을 좁힌다. 가운데 맞춤은 에디터가 지워서 못 쓴다.
+    """
+    n = max((len(r) for r in rows), default=0)
+    if n < 2:
+        return []
+    longest = []
+    for i in range(n):
+        longest.append(max((_cell_width(r[i]) for r in rows if i < len(r)), default=2))
+    # 한 열이 너무 얇아지지 않게 바닥을 둔다. 바닥이 없으면 글자가 세로로 쪼개진다
+    floor = 6
+    raw = [max(w, floor) for w in longest]
+    total = sum(raw) or 1
+    return [f"{max(round(w / total * 100), floor)}%" for w in raw]
+
+
 def _table_cells(line: str) -> list[list[Span]]:
     """한 행을 셀 단위 스팬 리스트로. 양끝 파이프는 있어도 없어도 된다."""
     return [parse_inline(c.strip()) for c in line.strip().strip("|").split("|")]
@@ -335,23 +361,33 @@ def _block_html(b: Block) -> str:
     if b.type == "table":
         colors = _table_colors()
 
-        def _cell(c, tag, *, bg=""):
+        plan = _col_plan(b.rows)
+
+        def _cell(c, tag, *, bg="", col=0):
             inner = "".join(_span_html(s) for s in c)
-            if colors is None:
+            bits = []
+            if col < len(plan):
+                # 가운데 맞춤은 넣지 않는다. 스마트에디터가 붙여넣기에서 셀의
+                # text-align 과 옛 align 속성을 둘 다 지운다(2026-09-23 실측,
+                # scripts/check_table_width.py). 너비는 살아남는다
+                bits.append(f"width:{plan[col]}")
+            if colors is not None:
+                bits.append(f"border:1px solid {colors[2]}")
+                bits.append("padding:6px")
+                if bg:
+                    bits.append(f"background-color:{bg}")
+                    # 헤더와 기준 열은 굵게. 굵게는 붙여넣기에서 살아남는다
+                    inner = f"<b>{inner}</b>"
+            if not bits:
                 return f"<{tag}>{inner}</{tag}>"
-            style = f"border:1px solid {colors[2]};padding:6px"
-            if bg:
-                style += f";background-color:{bg}"
-                # 헤더와 기준 열은 굵게. 굵게는 붙여넣기에서 살아남는다
-                inner = f"<b>{inner}</b>"
-            return f'<{tag} style="{style}">{inner}</{tag}>'
+            return f'<{tag} style="{";".join(bits)}">{inner}</{tag}>'
 
         def _row(cells, tag, *, head=False):
             bg_of = (lambda i: "") if colors is None else (
                 (lambda i: colors[0]) if head else (lambda i: colors[1] if i == 0 else "")
             )
             return "<tr>" + "".join(
-                _cell(c, tag, bg=bg_of(i)) for i, c in enumerate(cells)
+                _cell(c, tag, bg=bg_of(i), col=i) for i, c in enumerate(cells)
             ) + "</tr>"
 
         head = f"<thead>{_row(b.rows[0], 'th', head=True)}</thead>" if b.header and b.rows else ""
