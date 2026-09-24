@@ -25,10 +25,12 @@ from __future__ import annotations
 import argparse
 import asyncio
 import datetime as dt
+import json
 import os
 import re
 import sys
 import time
+import urllib.parse
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
@@ -36,17 +38,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from naver_blog_mcp import selectors as S  # noqa: E402
 from naver_blog_mcp.editor import (  # noqa: E402
     EditorError, close_draft_list, close_publish_panel, delete_draft, draft_count, get_editor_frame, goto_editor,
-    list_drafts, open_publish_panel, rep_image_index, reserved_count, set_category,
+    list_drafts, open_draft_list, open_publish_panel, rep_image_index, reserved_count, set_category,
     set_reservation, set_rep_image, set_tags, set_topic,
     set_visibility,
     write_post,
 )
 from naver_blog_mcp.server import find_cover, preflight, read_meta, split_title  # noqa: E402
-from naver_blog_mcp.session import Session, snapshot  # noqa: E402
+from naver_blog_mcp.session import STATE, Session, snapshot  # noqa: E402
 
 KST = dt.timezone(dt.timedelta(hours=9))
 
-DUMP = """
+# 이 도구가 네이버에 올린 글을 적어 두는 장부. 쿠키와 같은 폴더(커밋 제외)에 둔다.
+# 같은 글을 두 번 올리는 사고를 막으려고 쓴다(2026-09-23 메타 글 2회 발행,
+# 2026-09-24 LG 글 예약 1건 + 임시저장 1건).
+LEDGER = STATE.parent / "drafted.json"
+
+DUMP = r"""
 () => [...document.querySelectorAll('.se-component')].flatMap(c => {
   const kind = c.classList.contains('se-text') ? 'text'
     : c.classList.contains('se-quotation') ? 'quote'
@@ -82,6 +89,90 @@ def log(*a):
     print(*a, flush=True)
 
 
+def _norm(t: str) -> str:
+    """제목 비교용. 공백만 맞춘다. 네이버가 앞뒤 공백을 다듬는 일이 있다."""
+    return " ".join((t or "").split())
+
+
+def ledger_read() -> list[dict]:
+    try:
+        return json.loads(LEDGER.read_text(encoding="utf-8"))["posts"]
+    except Exception:
+        return []
+
+
+def ledger_find(title: str) -> dict | None:
+    n = _norm(title)
+    return next((p for p in ledger_read() if _norm(p.get("title", "")) == n), None)
+
+
+def ledger_add(title: str, reserved_for: dt.datetime | None) -> None:
+    """올린 글을 장부에 적는다. 실패해도 본 작업을 망치지 않는다."""
+    posts = ledger_read()
+    posts.append({
+        "title": _norm(title),
+        "at": dt.datetime.now(KST).isoformat(timespec="minutes"),
+        "reserved_for": f"{reserved_for:%Y-%m-%d %H:%M}" if reserved_for else None,
+        "blog": os.environ.get("NAVER_BLOG_ID", ""),
+    })
+    try:
+        LEDGER.parent.mkdir(parents=True, exist_ok=True)
+        tmp = LEDGER.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"posts": posts[-500:]}, ensure_ascii=False, indent=1),
+                       encoding="utf-8")
+        os.replace(tmp, LEDGER)
+    except Exception as e:
+        log("장부를 못 적었다(계속 진행):", e)
+
+
+async def blog_has_title(ctx, title: str) -> bool:
+    """이미 발행된 글 중에 같은 제목이 있나. 예약본은 여기 안 나온다."""
+    blog = os.environ.get("NAVER_BLOG_ID", "")
+    url = (f"https://blog.naver.com/PostTitleListAsync.naver?blogId={blog}&currentPage=1"
+           "&countPerPage=30&categoryNo=0&parentCategoryNo=0&viewdate=&range=&type="
+           "&pagingType=&noTitleYn=")
+    try:
+        txt = await (await ctx.request.get(url)).text()
+    except Exception as e:
+        log("블로그 글 목록을 못 읽었다(계속 진행):", type(e).__name__)
+        return False
+    n = _norm(title)
+    return any(_norm(urllib.parse.unquote_plus(t)) == n
+               for t in re.findall(r'"title"\s*:\s*"(.*?)"', txt))
+
+
+async def already_there(ctx, page, title: str) -> str:
+    """같은 글이 이미 올라가 있으면 어디에 있는지 한 줄로 돌려준다. 없으면 빈 문자열.
+
+    세 군데를 본다. 장부가 먼저다(공짜이고, 예약본까지 잡는 유일한 방법이다).
+    예약 목록은 네이버가 따로 안 준다.
+    """
+    hit = ledger_find(title)
+    if hit:
+        where = f"이 도구가 {hit.get('at')} 에 올렸다"
+        if hit.get("reserved_for"):
+            where += f" (예약 {hit['reserved_for']})"
+        return where
+    if await blog_has_title(ctx, title):
+        return "블로그에 이미 발행돼 있다"
+    # 편집기가 덜 떴을 때 목록을 못 읽는 일이 있다. 한 번 더 해 본다
+    drafts = None
+    for attempt in (1, 2):
+        try:
+            frame = await get_editor_frame(page)
+            await open_draft_list(page, frame)
+            drafts = await list_drafts(page, frame)
+            await close_draft_list(page, frame)
+            break
+        except Exception as e:
+            if attempt == 2:
+                log("임시저장함을 못 읽었다(계속 진행):", type(e).__name__)
+                return ""
+            await page.wait_for_timeout(2000)
+    n = _norm(title)
+    return next((f"임시저장함에 있다({d[1]})" for d in drafts or [] if _norm(d[0]) == n), "")
+
+
 async def main(args) -> int:
     folder = Path(args.folder)
     head_title, body = split_title((folder / "post.md").read_text(encoding="utf-8"))
@@ -106,6 +197,17 @@ async def main(args) -> int:
         page = await ctx.new_page()
         await goto_editor(page, os.environ["NAVER_BLOG_ID"])
         await snapshot(ctx)
+
+        # 같은 글을 두 번 올리지 않는다. 부르는 데가 둘이라(루틴, 발행 워커) 한쪽이
+        # 이미 올린 걸 다른 쪽이 모르고 또 올리는 사고가 났다.
+        if not args.force:
+            where = await already_there(ctx, page, title)
+            if where:
+                log(f"이미 올라간 글이다 — {where}")
+                log(f"제목: {title}")
+                log("정말 다시 올리려면 --force 를 준다.")
+                return 7
+
         notes = await write_post(page, title, body, cover=str(cover) if cover else None)
         frame = await get_editor_frame(page)
         # 표지를 본문 맨 앞에 넣었으면 그것을 대표 이미지로 굳힌다. 첫 이미지가 기본
@@ -195,9 +297,13 @@ async def main(args) -> int:
             pass
 
         if not when:
+            if not args.dry_run:
+                ledger_add(title, None)
             log("끝. 임시저장만")
             return 0
         if stop:
+            if not args.dry_run:
+                ledger_add(title, None)
             log("예약 발행 안 함. 걸린 점검:", stop, "| 임시저장본은 남아 있다")
             return 3
 
@@ -232,6 +338,8 @@ async def main(args) -> int:
         await goto_editor(check, os.environ["NAVER_BLOG_ID"])
         count1 = await reserved_count(await get_editor_frame(check))
         log(f"예약 발행 수 {count0} -> {count1}")
+        # 늘었든 아니든 네이버에는 글이 올라갔다. 장부에 적어야 다음 실행이 또 안 올린다
+        ledger_add(title, when)
         if count0 is not None and count1 == count0 + 1:
             log(f"예약 발행 확인: {when:%Y-%m-%d %H:%M} KST '{title}'")
             return 0
@@ -244,6 +352,8 @@ if __name__ == "__main__":
     ap.add_argument("folder")
     ap.add_argument("--reserve", help="예약 발행 시각 KST, 'YYYY-MM-DD HH:MM' (분은 10분 단위)")
     ap.add_argument("--dry-run", action="store_true", help="예약 값까지 맞추고 발행 버튼은 누르지 않는다")
+    ap.add_argument("--force", action="store_true",
+                    help="같은 제목이 이미 올라가 있어도 그냥 올린다(중복 확인 건너뜀)")
     os.environ.setdefault("NAVER_BLOG_ID", "leetkey_lab")
     # 리트키랩 연구소 글은 전부 블로그 홈 주제 '비즈니스·경제'로 분류한다(대표 2026-09-16)
     os.environ.setdefault("NAVER_TOPIC", "비즈니스·경제")
