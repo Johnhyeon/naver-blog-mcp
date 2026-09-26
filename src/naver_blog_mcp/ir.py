@@ -94,8 +94,9 @@ _IMG = re.compile(r"^!\[(?P<alt>[^\]]*)\]\((?P<src>[^)]+)\)\s*$")
 # :::file 경로:::  :::formula x^2+y^2=z^2:::  :::place 강남역:::
 # :::news 매체 | 기사 제목:::  :::stock 072950:::  :::book 책 제목:::  (글감 카드, material.py)
 # :::video https://www.youtube.com/watch?v=...:::  (유튜브 영상 플레이어)
+# :::link https://...:::  (툴바 '링크' 카드. 썸네일·제목·설명이 붙는 큰 카드)
 _DIRECTIVE = re.compile(r"^:::\s*(?P<name>[a-z]+)\s+(?P<arg>.+?)\s*:::$")
-_KNOWN_DIRECTIVES = {"file", "formula", "place", "news", "stock", "book", "video"}
+_KNOWN_DIRECTIVES = {"file", "formula", "place", "news", "stock", "book", "video", "link"}
 
 # 에디터가 영상 플레이어(se-oembed)로 바꾸는 유튜브 주소. 다른 주소는 링크 카드가 되므로 받지 않는다.
 YOUTUBE_URL = re.compile(

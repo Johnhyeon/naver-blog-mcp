@@ -1262,6 +1262,42 @@ async def insert_material(page: Page, frame: Frame, kind: str, arg: str) -> str 
     return " / ".join(rows[idx])
 
 
+async def insert_oglink(page: Page, frame: Frame, url: str) -> str:
+    """툴바 '링크' 버튼으로 링크 카드를 넣는다. 들어간 카드 제목을 반환.
+
+    유튜브 주소는 플레이어가 되므로 insert_video 를 쓴다. 그 밖의 주소는 여기.
+    미리보기가 안 뜨면 EditorError — 글자를 대신 치지 않는다(팝업에서 커서가 돌아오지
+    못해 엉뚱한 줄에 끼어든다). 쿠팡처럼 봇을 막는 사이트는 미리보기가 안 뜰 수 있다.
+    """
+    from .ir import YOUTUBE_URL
+
+    if YOUTUBE_URL.match(url):
+        raise EditorError(f"유튜브 주소는 :::video 로 넣는다: {url}")
+    btn = await S.first(frame, S.OGLINK_BUTTON)
+    if not btn:
+        raise EditorError("링크 버튼을 못 찾음 — selectors.OGLINK_BUTTON 갱신 필요")
+    before = await _count(frame, S.OGLINK_COMPONENT)
+    await btn.click()
+    inp = await S.first(frame, S.OGLINK_INPUT, timeout=5000)
+    if not inp:
+        raise EditorError("링크 주소 입력창을 못 찾음 — selectors.OGLINK_INPUT 갱신 필요")
+    await inp.click()
+    await inp.press_sequentially(url, delay=5)
+    await page.keyboard.press("Enter")
+    preview = await S.first(frame, S.OGLINK_PREVIEW, timeout=10_000)
+    confirm = await S.first(frame, S.OGLINK_CONFIRM, timeout=2000) if preview else None
+    if not confirm:
+        close = await S.first(frame, S.OGLINK_CLOSE, timeout=1500)
+        if close:
+            await close.click()
+        raise EditorError(f"링크 미리보기가 안 뜸(사이트가 막았을 수 있다): {url}")
+    await confirm.click()
+    await _wait_added(frame, S.OGLINK_COMPONENT, before, "링크 카드")
+    card = frame.locator(S.OGLINK_COMPONENT[0]).nth(before)
+    title = card.locator(S.OGLINK_CARD_TITLE)
+    return (await title.first.inner_text()).strip() if await title.count() else url
+
+
 async def insert_video(page: Page, frame: Frame, url: str) -> str:
     """유튜브 영상 플레이어를 넣는다. 들어간 영상 제목을 반환.
 
@@ -1391,6 +1427,13 @@ async def write_post(
                         notes.append(f"{i}:영상({picked[:30]})")
                     except EditorError as e:
                         notes.append(f"{i}:영상 누락({e})")
+                    await _focus_tail(page, frame)
+                elif b.type == "link":
+                    try:
+                        picked = await insert_oglink(page, frame, b.raw)
+                        notes.append(f"{i}:링크카드({picked[:30]})")
+                    except EditorError as e:
+                        notes.append(f"{i}:링크카드 누락({e})")
                     await _focus_tail(page, frame)
                 else:
                     await _fresh_line(page, frame)

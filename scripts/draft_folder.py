@@ -61,8 +61,9 @@ DUMP = r"""
     : c.classList.contains('se-image') ? 'image'
     : c.classList.contains('se-material') ? 'material'
     : c.classList.contains('se-oembed') ? 'video'
+    : c.classList.contains('se-oglink') ? 'oglink'
     : c.classList.contains('se-documentTitle') ? 'title' : 'other';
-  if (kind === 'hr' || kind === 'material' || kind === 'image' || kind === 'video')
+  if (kind === 'hr' || kind === 'material' || kind === 'image' || kind === 'video' || kind === 'oglink')
     return [{kind, t: kind === 'image' || kind === 'hr' ? '' : c.innerText.split(String.fromCharCode(10)).join(' '), style: c.className}];
   return [...c.querySelectorAll('.se-text-paragraph')].map(p => {
     const t = p.innerText.split(String.fromCharCode(8203)).join('').trim();
@@ -232,9 +233,12 @@ async def main(args) -> int:
         want_links = len(re.findall(r"\]\(https?://", body))
         videos = [r["t"][:30] for r in rows if r["kind"] == "video"]
         want_videos = len(re.findall(r"^\s*:::\s*video\s", body, re.M))
+        cards = [r["t"][:30] for r in rows if r["kind"] == "oglink"]
+        want_cards = len(re.findall(r"^\s*:::\s*link\s", body, re.M))
         log("서식 이상:", bad or 0, "| 붙은 소제목:", glued or 0, "| 링크:", links,
             "| 그림:", sum(1 for r in rows if r["kind"] == "image"), "| 구분선:", sum(1 for r in rows if r["kind"] == "hr"),
-            "| 글감 카드:", sum(1 for r in rows if r["kind"] == "material"), "| 영상:", videos)
+            "| 글감 카드:", sum(1 for r in rows if r["kind"] == "material"), "| 영상:", videos,
+            "| 링크 카드:", f"{len(cards)}/{want_cards}" + (f" {cards}" if cards else ""))
         log("표지:", cover.name if cover else "없음",
             "| 대표 이미지:", "못 지정" if rep_ok is False else (f"{rep_at}번째 그림" if rep_at is not None else "없음"))
 
