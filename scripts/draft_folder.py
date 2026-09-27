@@ -142,20 +142,27 @@ async def blog_has_title(ctx, title: str) -> bool:
                for t in re.findall(r'"title"\s*:\s*"(.*?)"', txt))
 
 
-async def already_there(ctx, page, title: str) -> str:
-    """같은 글이 이미 올라가 있으면 어디에 있는지 한 줄로 돌려준다. 없으면 빈 문자열.
+async def already_there(ctx, page, title: str) -> tuple[str, str]:
+    """같은 글이 이미 올라가 있으면 (어디에 있나, 무엇으로) 를 돌려준다. 없으면 ("", "").
 
     세 군데를 본다. 장부가 먼저다(공짜이고, 예약본까지 잡는 유일한 방법이다).
     예약 목록은 네이버가 따로 안 준다.
+
+    둘째 값이 **막을 일인지 이어받을 일인지**를 가른다.
+    `reserved`/`blog` 는 진짜 중복이라 막는다. `draft`/`ledger` 는 아직 임시저장일 뿐이라
+    워커가 예약을 걸 때 이어받아도 된다(main 참고).
     """
     hit = ledger_find(title)
-    if hit:
-        where = f"이 도구가 {hit.get('at')} 에 올렸다"
-        if hit.get("reserved_for"):
-            where += f" (예약 {hit['reserved_for']})"
-        return where
+    if hit and hit.get("reserved_for"):
+        # 예약본은 블로그 글 목록에 안 나온다. 장부만이 잡는다
+        return f"이 도구가 {hit.get('at')} 에 올렸다 (예약 {hit['reserved_for']})", "reserved"
+    # **장부에 있어도 블로그를 먼저 본다.** 장부의 임시저장 기록은 이어받아도 되지만
+    # 그 글이 그새 발행됐을 수 있다 — 대표가 손으로 냈거나(2026-09-28 추석 글) 예약이
+    # 나갔거나. 그걸 이어받으면 같은 글이 두 번 나간다
     if await blog_has_title(ctx, title):
-        return "블로그에 이미 발행돼 있다"
+        return "블로그에 이미 발행돼 있다", "blog"
+    if hit:
+        return f"이 도구가 {hit.get('at')} 에 올렸다", "ledger"
     # 편집기가 덜 떴을 때 목록을 못 읽는 일이 있다. 한 번 더 해 본다
     drafts = None
     for attempt in (1, 2):
@@ -168,10 +175,11 @@ async def already_there(ctx, page, title: str) -> str:
         except Exception as e:
             if attempt == 2:
                 log("임시저장함을 못 읽었다(계속 진행):", type(e).__name__)
-                return ""
+                return "", ""
             await page.wait_for_timeout(2000)
     n = _norm(title)
-    return next((f"임시저장함에 있다({d[1]})" for d in drafts or [] if _norm(d[0]) == n), "")
+    where = next((f"임시저장함에 있다({d[1]})" for d in drafts or [] if _norm(d[0]) == n), "")
+    return where, ("draft" if where else "")
 
 
 async def main(args) -> int:
@@ -202,7 +210,17 @@ async def main(args) -> int:
         # 같은 글을 두 번 올리지 않는다. 부르는 데가 둘이라(루틴, 발행 워커) 한쪽이
         # 이미 올린 걸 다른 쪽이 모르고 또 올리는 사고가 났다.
         if not args.force:
-            where = await already_there(ctx, page, title)
+            where, kind = await already_there(ctx, page, title)
+            # **아직 임시저장일 뿐이면 예약은 이어받는다.** 정상 흐름이 바로 이것이다 —
+            # 루틴이 임시저장까지 하고(A16 1번) 워커가 그 글에 예약을 건다(A16 4번).
+            # 이 검사가 그 사이를 막아서 2026-09-25·27·28 세 편이 예약도 못 걸리고
+            # 슬롯을 놓쳤다(로그에 "이미 올라간 글이다" 6번).
+            # 옛 임시저장은 저장한 뒤 아래 '예전 본 삭제' 가 치운다. 여기서 먼저 지우면
+            # 목록이 편집 모드로 열린 채 글쓰기로 들어가서 더 위험하다.
+            # **막는 것은 reserved 와 blog 뿐이다** — 그게 진짜 두 번 나가는 경우다
+            if where and when and kind in ("ledger", "draft"):
+                log(f"내가 올려 둔 임시저장이다 — {where}. 이어받아 예약을 건다")
+                where = ""
             if where:
                 log(f"이미 올라간 글이다 — {where}")
                 log(f"제목: {title}")
