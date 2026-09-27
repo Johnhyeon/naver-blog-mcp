@@ -155,14 +155,16 @@ async def already_there(ctx, page, title: str) -> tuple[str, str]:
     hit = ledger_find(title)
     if hit and hit.get("reserved_for"):
         # 예약본은 블로그 글 목록에 안 나온다. 장부만이 잡는다
-        return f"이 도구가 {hit.get('at')} 에 올렸다 (예약 {hit['reserved_for']})", "reserved"
+        return f"이 도구가 {hit.get('at')} 에 올려 {hit['reserved_for']} 예약까지 걸어 뒀다", "reserved"
     # **장부에 있어도 블로그를 먼저 본다.** 장부의 임시저장 기록은 이어받아도 되지만
     # 그 글이 그새 발행됐을 수 있다 — 대표가 손으로 냈거나(2026-09-28 추석 글) 예약이
     # 나갔거나. 그걸 이어받으면 같은 글이 두 번 나간다
     if await blog_has_title(ctx, title):
         return "블로그에 이미 발행돼 있다", "blog"
     if hit:
-        return f"이 도구가 {hit.get('at')} 에 올렸다", "ledger"
+        # "올렸다" 로만 쓰면 발행된 줄 안다. 임시저장일 뿐이라고 분명히 적는다
+        # (2026-09-28 대표: "이미 올라갔다 하는데 안올라감")
+        return f"이 도구가 {hit.get('at')} 에 임시저장해 뒀다(발행된 것은 아니다)", "ledger"
     # 편집기가 덜 떴을 때 목록을 못 읽는 일이 있다. 한 번 더 해 본다
     drafts = None
     for attempt in (1, 2):
@@ -222,7 +224,7 @@ async def main(args) -> int:
                 log(f"내가 올려 둔 임시저장이다 — {where}. 이어받아 예약을 건다")
                 where = ""
             if where:
-                log(f"이미 올라간 글이다 — {where}")
+                log(f"같은 제목이 이미 있다 — {where}")
                 log(f"제목: {title}")
                 log("정말 다시 올리려면 --force 를 준다.")
                 return 7
