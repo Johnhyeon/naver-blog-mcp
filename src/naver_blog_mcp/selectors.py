@@ -295,6 +295,15 @@ DRAFT_ITEM_TITLE = ["strong[class*='title__']", ".title__p1G9u"]
 DRAFT_ITEM_DATE = ["span[class*='date__']", ".date__toLrn"]
 DRAFT_LAYER_CLOSE = ["button[class*='close_button']", ".close_button__YWXJ_"]
 
+# 예약 발행 목록  [실측 2026-09-28]
+# **네이버가 예약 글을 따로 주는 API 는 없지만, 편집기 상단 '예약 발행 N건' 을 누르면
+# 임시저장 목록과 같은 모양의 레이어가 열린다.** 예약본은 블로그 글 목록 API 에 안 나오므로
+# 손으로 건 예약을 프로그램이 알 수 있는 유일한 길이다(예전에는 장부뿐이라고 적어 뒀었다).
+RESERVE_LIST_OPEN = ["button[class*='reserve_btn__']", ".reserve_btn__Yc1V8"]
+RESERVE_ITEM = ["ul[class*='list__'] li[class*='item__']:has(strong[class*='title__'])"]
+RESERVE_ITEM_TITLE = ["strong[class*='title__']"]
+RESERVE_ITEM_DATE = ["span[class*='date__']"]
+
 # 삭제 확인 dialog 문구에 반드시 들어가는 낱말.  [실측]
 #   임시저장: "선택된 1개의 임시저장 글을 삭제하시겠습니까? / 삭제된 글은 복구되지 않습니다."
 #   발행글:   "삭제된 글은 복구할 수 없습니다. / 삭제하시겠습니까?"

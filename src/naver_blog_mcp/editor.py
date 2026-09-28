@@ -348,6 +348,35 @@ async def list_drafts(page: Page, frame: Frame) -> list[tuple[str, str]]:
     return out
 
 
+async def list_reserved(page: Page, frame: Frame) -> list[tuple[str, str]]:
+    """예약 발행된 글 [(제목, "YYYY.MM.DD HH:MM"), ...].
+
+    **예약본은 블로그 글 목록 API 에 안 나온다.** 그래서 예전에는 이 도구의 장부
+    (`drafted.json`)만이 예약을 알 수 있다고 적어 뒀는데, 손으로 건 예약은 장부에
+    안 남는다. 2026-09-28 에 대표가 손으로 두 편을 걸었고 제목 앞에 `[와인스타인]` 을
+    붙였는데, 발행 워커는 그걸 볼 길이 없어 같은 글을 제 슬롯에 또 낼 참이었다.
+
+    편집기 상단 '예약 발행 N건' 을 누르면 임시저장과 같은 모양의 레이어가 열린다.
+    읽기만 한다 — 아무것도 누르지 않는다.
+    """
+    btn = await S.first(frame, S.RESERVE_LIST_OPEN, timeout=5000)
+    if not btn:
+        return []                       # 예약이 0건이면 버튼 자체가 없다
+    await btn.click()
+    await asyncio.sleep(1.5)
+    items = await _locate_all(frame, S.RESERVE_ITEM)
+    if items is None:
+        return []
+    out = []
+    for i in range(await items.count()):
+        it = items.nth(i)
+        title = await _inner(it, S.RESERVE_ITEM_TITLE)
+        when = await _inner(it, S.RESERVE_ITEM_DATE)
+        if title:
+            out.append((title, when))
+    return out
+
+
 async def _inner(scope, candidates: list[str]) -> str:
     loc = await _locate_all(scope, candidates)
     if loc is None:
