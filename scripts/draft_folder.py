@@ -138,6 +138,16 @@ def ledger_add(title: str, reserved_for: dt.datetime | None) -> None:
         log("장부를 못 적었다(계속 진행):", e)
 
 
+def _still_ahead(reserved_for: str | None) -> bool:
+    """장부의 예약 시각이 아직 안 왔나. 못 읽는 값이면 막는 쪽으로 둔다."""
+    if not reserved_for:
+        return False
+    try:
+        return dt.datetime.strptime(reserved_for[:16], "%Y-%m-%d %H:%M").replace(tzinfo=KST) > dt.datetime.now(KST)
+    except ValueError:
+        return True
+
+
 async def blog_has_title(ctx, title: str) -> bool:
     """이미 발행된 글 중에 같은 제목이 있나. 예약본은 여기 안 나온다."""
     blog = os.environ.get("NAVER_BLOG_ID", "")
@@ -165,8 +175,11 @@ async def already_there(ctx, page, title: str) -> tuple[str, str]:
     워커가 예약을 걸 때 이어받아도 된다(main 참고).
     """
     hit = ledger_find(title)
-    if hit and hit.get("reserved_for"):
-        # 예약본은 블로그 글 목록에 안 나온다. 장부만이 잡는다
+    if hit and _still_ahead(hit.get("reserved_for")):
+        # 예약본은 블로그 글 목록에 안 나온다. 장부만이 잡는다.
+        # **아직 오지 않은 예약만 막는다.** 지나간 예약은 나갔거나(그러면 아래 블로그
+        # 검사가 잡는다) 취소된 것이다. 만료가 없던 탓에 09-27 20:00 예약이 취소된
+        # 애프터마켓 글이 10-01 자리에서도 영영 막혀 있었다(2026-09-28)
         return f"이 도구가 {hit.get('at')} 에 올려 {hit['reserved_for']} 예약까지 걸어 뒀다", "reserved"
     # **장부에 있어도 블로그를 먼저 본다.** 장부의 임시저장 기록은 이어받아도 되지만
     # 그 글이 그새 발행됐을 수 있다 — 대표가 손으로 냈거나(2026-09-28 추석 글) 예약이
