@@ -295,6 +295,14 @@ DRAFT_ITEM_TITLE = ["strong[class*='title__']", ".title__p1G9u"]
 DRAFT_ITEM_DATE = ["span[class*='date__']", ".date__toLrn"]
 DRAFT_LAYER_CLOSE = ["button[class*='close_button']", ".close_button__YWXJ_"]
 
+# 예약 달력의 달 넘기기  [실측 2026-09-29]
+# jQuery UI datepicker 다. '다음 달' 버튼이 있는데 우리 코드가 안 눌러 보고
+# "다른 달 예약은 지원하지 않음" 으로 막고 있었다(대표 지적).
+RESERVE_NEXT_MONTH = ["a.ui-datepicker-next", "button.ui-datepicker-next",
+                      "[class*='ui-datepicker-next']"]
+RESERVE_CAL_MONTH = ["span.ui-datepicker-month", "[class*='ui-datepicker-month']"]
+RESERVE_CAL_YEAR = ["span.ui-datepicker-year", "[class*='ui-datepicker-year']"]
+
 # 예약 발행 목록  [실측 2026-09-28]
 # **네이버가 예약 글을 따로 주는 API 는 없지만, 편집기 상단 '예약 발행 N건' 을 누르면
 # 임시저장 목록과 같은 모양의 레이어가 열린다.** 예약본은 블로그 글 목록 API 에 안 나오므로

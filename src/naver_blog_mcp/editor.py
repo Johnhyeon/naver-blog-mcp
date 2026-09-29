@@ -570,11 +570,43 @@ async def reserve_state(frame: Frame) -> dict:
         [S.RESERVE_PRE[0], S.RESERVE_DATE[0], S.RESERVE_HOUR[0], S.RESERVE_MINUTE[0]])
 
 
+async def _go_to_month(frame: Frame, when) -> None:
+    """열린 달력을 `when` 의 달까지 "다음 달" 을 눌러 옮긴다.
+
+    달력 머리의 '9월' / '2026' 을 읽어 목표와 같아질 때까지 누른다.
+    과거로는 안 간다 — 지난 날짜에는 예약할 수 없다.
+    """
+    for _ in range(12):
+        mon = await _inner(frame, S.RESERVE_CAL_MONTH)
+        yr = await _inner(frame, S.RESERVE_CAL_YEAR)
+        if not mon:
+            return                      # 달력 머리를 못 읽으면 예전처럼 그냥 진행
+        try:
+            m = int(''.join(ch for ch in mon if ch.isdigit()))
+            y = int(''.join(ch for ch in yr if ch.isdigit())) if yr else when.year
+        except ValueError:
+            return
+        if (y, m) == (when.year, when.month):
+            return
+        if (y, m) > (when.year, when.month):
+            raise EditorError(f"달력이 이미 {y}. {m:02d} 다. 지난 달로는 예약하지 않는다")
+        nxt = await S.first(frame, S.RESERVE_NEXT_MONTH, timeout=3000)
+        if not nxt:
+            raise EditorError("달력의 '다음 달' 버튼을 못 찾음 — selectors.RESERVE_NEXT_MONTH 갱신 필요")
+        await nxt.click()
+        await asyncio.sleep(0.6)
+    raise EditorError(f"달력을 {when:%Y. %m} 까지 못 옮겼다(12번 눌러도 안 됨)")
+
+
 async def set_reservation(page: Page, frame: Frame, when) -> dict:
     """발행 레이어에서 예약 발행 시각을 맞추고, 화면 값이 정확히 그 시각인지 확인해 돌려준다.
 
-    when: datetime (한국 시간). 분은 10분 단위만 된다. 이번 달 날짜만 지원한다(달 넘기기 없음).
+    when: datetime (한국 시간). 분은 10분 단위만 된다.
     값이 하나라도 다르면 EditorError. 이 함수는 발행 버튼을 누르지 않는다.
+
+    **달을 넘길 수 있다**(2026-09-29). 예전에는 다른 달이면 바로 거부했는데,
+    그건 네이버의 한계가 아니라 이 코드가 안 해 본 것이었다. 달력이 jQuery UI
+    datepicker 라 '다음 달' 버튼이 있다. 한 달씩 눌러 옮긴다(최대 12번).
     """
     if when.minute % 10:
         raise EditorError(f"예약 분은 10분 단위만 됩니다: {when:%H:%M}")
@@ -588,10 +620,9 @@ async def set_reservation(page: Page, frame: Frame, when) -> dict:
     want_date = f"{when:%Y. %m. %d}"
     state = await reserve_state(frame)
     if state["date"] != want_date:
-        if state["date"][:9] != want_date[:9]:
-            raise EditorError(f"다른 달 예약은 지원하지 않음: 지금 {state['date']}, 원하는 {want_date}")
         await frame.locator(S.RESERVE_DATE[0]).first.click()
         await asyncio.sleep(0.8)
+        await _go_to_month(frame, when)
         days = frame.locator(S.RESERVE_DAY)
         for i in range(await days.count()):
             if (await days.nth(i).inner_text()).strip() == str(when.day):
