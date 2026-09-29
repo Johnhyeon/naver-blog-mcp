@@ -99,7 +99,19 @@ DUMP = r"""
 
 
 def log(*a):
-    print(*a, flush=True)
+    """찍다가 죽지 않는다.
+
+    윈도우 콘솔 기본 인코딩이 cp949 라, 줄표(—) 하나 때문에 UnicodeEncodeError 로
+    스크립트가 통째로 멈춘 적이 있다(2026-09-29, 중복 안내 문구를 찍다가).
+    **임시저장은 이미 끝난 뒤였고 예약만 안 걸렸다** — 로그가 본 작업을 죽이면 안 된다.
+    먼저 stdout 을 utf-8 로 돌려 보고, 그래도 안 되면 못 찍는 글자를 바꿔서라도 찍는다.
+    """
+    try:
+        print(*a, flush=True)
+    except UnicodeEncodeError:
+        enc = getattr(sys.stdout, "encoding", "") or "utf-8"
+        safe = [str(x).encode(enc, "replace").decode(enc, "replace") for x in a]
+        print(*safe, flush=True)
 
 
 def _norm(t: str) -> str:
@@ -416,6 +428,11 @@ if __name__ == "__main__":
     ap.add_argument("--dry-run", action="store_true", help="예약 값까지 맞추고 발행 버튼은 누르지 않는다")
     ap.add_argument("--force", action="store_true",
                     help="같은 제목이 이미 올라가 있어도 그냥 올린다(중복 확인 건너뜀)")
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")   # cp949 콘솔에서 줄표·이모지가 죽지 않게
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
     os.environ.setdefault("NAVER_BLOG_ID", "leetkey_lab")
     # 리트키랩 연구소 글은 전부 블로그 홈 주제 '비즈니스·경제'로 분류한다(대표 2026-09-16)
     os.environ.setdefault("NAVER_TOPIC", "비즈니스·경제")
