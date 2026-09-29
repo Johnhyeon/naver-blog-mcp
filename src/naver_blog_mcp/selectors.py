@@ -311,6 +311,8 @@ RESERVE_LIST_OPEN = ["button[class*='reserve_btn__']", ".reserve_btn__Yc1V8"]
 RESERVE_ITEM = ["ul[class*='list__'] li[class*='item__']:has(strong[class*='title__'])"]
 RESERVE_ITEM_TITLE = ["strong[class*='title__']"]
 RESERVE_ITEM_DATE = ["span[class*='date__']"]
+# 예약 한 줄의 삭제 버튼. hover 전에는 화면 밖에 있어 클릭이 안 먹는다(2026-09-29)
+RESERVE_ITEM_DELETE = ["button[class*='delete_button__']"]
 
 # 삭제 확인 dialog 문구에 반드시 들어가는 낱말.  [실측]
 #   임시저장: "선택된 1개의 임시저장 글을 삭제하시겠습니까? / 삭제된 글은 복구되지 않습니다."

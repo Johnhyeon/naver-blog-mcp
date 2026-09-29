@@ -559,6 +559,58 @@ async def delete_draft(page: Page, frame: Frame, title: str = "", index: int | N
     return target
 
 
+async def delete_reserved(page: Page, frame: Frame, title: str) -> tuple[str, str]:
+    """예약 발행 글 하나를 지운다. (지운 제목, 예약이었던 시각) 을 돌려준다.
+
+    **예약을 걸고 나면 그 글은 임시저장함에 없다.** 그래서 `delete_draft` 로는
+    못 지운다. 표지나 본문을 고쳐 다시 올리려면 예약본을 먼저 지워야 한다
+    (2026-09-29: 표지를 다시 뽑았는데 네이버에 걸린 예약본은 옛 표지였다).
+
+    제목이 여러 줄과 맞으면 거부한다. 삭제는 되돌릴 수 없다.
+    삭제 버튼은 hover 전에는 눌러도 안 먹어서 반드시 먼저 hover 한다.
+    """
+    btn = await S.first(frame, S.RESERVE_LIST_OPEN, timeout=5000)
+    if not btn:
+        raise EditorError("예약 발행이 0건입니다")
+    await btn.click()
+    await asyncio.sleep(1.5)
+
+    items = await _locate_all(frame, S.RESERVE_ITEM)
+    if items is None:
+        raise EditorError("예약 목록을 못 읽었습니다 — selectors.RESERVE_ITEM 갱신 필요")
+
+    hits = []
+    for i in range(await items.count()):
+        it = items.nth(i)
+        got = await _inner(it, S.RESERVE_ITEM_TITLE)
+        if got.strip() == title.strip():
+            hits.append((i, got.strip(), await _inner(it, S.RESERVE_ITEM_DATE)))
+    if not hits:
+        raise EditorError(f"그 제목의 예약이 없습니다: {title}")
+    if len(hits) > 1:
+        raise EditorError(f"같은 제목의 예약이 {len(hits)}건입니다 — 손으로 정리한 뒤 다시 부르세요: {title}")
+
+    idx, got, when = hits[0]
+    item = items.nth(idx)
+    await item.hover()                 # hover 해야 삭제 버튼이 화면 안으로 들어온다
+    await asyncio.sleep(0.4)
+    dele = item.locator(S.RESERVE_ITEM_DELETE[0]).first
+    if not await dele.count():
+        raise EditorError("삭제 버튼을 못 찾음 — selectors.RESERVE_ITEM_DELETE 갱신 필요")
+
+    seen: list[str] = []
+    handler = _make_delete_dialog_handler(seen)
+    page.on("dialog", handler)
+    try:
+        await dele.click()
+        await asyncio.sleep(2.5)
+    finally:
+        page.remove_listener("dialog", handler)
+
+    _assert_delete_confirmed(seen, got)
+    return got, when
+
+
 async def reserve_state(frame: Frame) -> dict:
     """발행 레이어의 발행 시간 상태. {pre, date, hour, minute}"""
     return await frame.evaluate(
