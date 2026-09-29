@@ -199,6 +199,9 @@ async def _draft(title: str, markdown: str, category: str, tags: list[str] | Non
 _IMG_RE = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
 _FILE_RE = re.compile(r":::file\s+([^:]+):::")
 _VIDEO_RE = re.compile(r"^\s*:::\s*video\s+(.+?)\s*:::\s*$", re.M)
+# HTML 주석. 도구가 본문에 남기는 표시(`<!-- series -->` 등)가 독자에게 보이면 안 된다.
+# 혼자 한 줄을 차지하면 그 줄째로 지운다 — 안 그러면 빈 줄이 남아 문단이 벌어진다
+_COMMENT_RE = re.compile(r"^[ \t]*<!--.*?-->[ \t]*\n|<!--.*?-->", re.S | re.M)
 _MAX_BYTES = 10 * 1024 * 1024
 
 
@@ -212,8 +215,13 @@ def preflight(base: Path, markdown: str) -> tuple[str, list[str]]:
 
     브라우저를 띄우기 전에 한 번에 확인한다. 넣다가 중간에 멈추면 임시저장함에
     반쪽짜리 글이 남고, 어디까지 들어갔는지 사람이 다시 확인해야 한다.
+
+    **HTML 주석은 지운다**(2026-09-29). 스마트에디터는 마크다운을 모르고 글자를
+    그대로 친다. `<!-- series -->` 같은 표시를 남겨 두면 **독자에게 그대로 보인다**
+    (대표: "`<!-- /series -->` 이렇게 나옴"). 도구가 쓰는 표시는 도구에서만 쓴다.
     """
     problems: list[str] = []
+    markdown = _COMMENT_RE.sub("", markdown)
 
     def fix_img(m: re.Match) -> str:
         p = _abs_local(base, m.group(2))
