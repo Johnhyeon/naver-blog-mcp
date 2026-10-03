@@ -180,6 +180,20 @@ def split_category_path(name: str) -> str:
     return name.split(">")[-1].strip() if ">" in name else name.strip()
 
 
+async def _click_item(item) -> None:
+    """드롭다운 항목을 누른다. 가로채기가 있으면 JS click 으로 떨어뜨린다.
+
+    2026-10-03: 블로그에 카테고리를 새로 만든 뒤 `LeetKit > Lens 소개` 를 못 골랐다.
+    Playwright 가 "인사이트 … subtree intercepts pointer events" 로 51번 재시도하다
+    타임아웃했다 — 목록 맨 위 항목이 아래 항목을 덮고 있었다.
+    `set_visibility` 가 쓰는 것과 같은 수를 쓴다. DOM click 은 가로채기를 타지 않는다.
+    """
+    try:
+        await item.click(timeout=5000)
+    except Exception:
+        await item.evaluate("el => el.click()")
+
+
 async def set_category(page: Page, frame: Frame, name: str) -> None:
     """카테고리를 고른다. 이름이 정확히 일치하는 항목을 우선한다.
 
@@ -195,14 +209,18 @@ async def set_category(page: Page, frame: Frame, name: str) -> None:
             item = loc.nth(i)
             clean, _ = _clean_category(await item.inner_text())
             if clean == name:
-                await item.click()
+                await _click_item(item)
                 await asyncio.sleep(0.8)
                 return
     fallback = await S.first(frame, S.CATEGORY_ITEM, timeout=2000, name=name)
     if not fallback:
         have = [n for n, _ in await read_categories(page, frame)]
+        # **드롭다운을 닫고 나간다**(2026-10-03). 열어 둔 채 예외를 던졌더니 그 목록이
+        # 주제 버튼을 덮어 `set_topic` 까지 30초 타임아웃으로 끌려 들어갔다.
+        await page.keyboard.press("Escape")
+        await asyncio.sleep(0.5)
         raise EditorError(f"카테고리 '{name}' 없음. 있는 것: {', '.join(have)}")
-    await fallback.click()
+    await _click_item(fallback)
     await asyncio.sleep(0.8)
 
 
@@ -246,7 +264,7 @@ async def set_topic(page: Page, frame: Frame, name: str) -> str:
     opener = await S.first(frame, S.TOPIC_OPEN)
     if not opener:
         raise EditorError("주제 버튼을 못 찾음 — selectors.TOPIC_OPEN 갱신 필요")
-    await opener.click()
+    await _click_item(opener)
     await asyncio.sleep(0.8)
     picked = await frame.evaluate(
         """([sel, name]) => {
@@ -265,7 +283,7 @@ async def set_topic(page: Page, frame: Frame, name: str) -> str:
     ok = await S.first(frame, S.TOPIC_OK)
     if not ok:
         raise EditorError("주제 확인 버튼을 못 찾음 — selectors.TOPIC_OK 갱신 필요")
-    await ok.click()
+    await _click_item(ok)
     await asyncio.sleep(0.8)
     now = await read_topic(frame)
     if now != name:
