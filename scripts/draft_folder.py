@@ -221,6 +221,56 @@ async def already_there(ctx, page, title: str) -> tuple[str, str]:
     return where, ("draft" if where else "")
 
 
+def inspect(rows, body, meta, notes, cover, rep_ok, rep_at) -> list[str]:
+    """편집기에 들어간 결과(DUMP)를 글과 대 본다. 걸린 점검 이름을 돌려준다. 비면 통과.
+
+    임시저장(이 파일)과 발행 글 수정(`update_post.py`)이 같은 잣대를 쓴다.
+    """
+    headings = {line[3:].strip() for line in body.splitlines() if line.startswith("## ")}
+    bad = []
+    for r in rows:
+        if r["kind"] != "text" or not r["t"]:
+            continue
+        is_head, big = r["t"] in headings, "se-fs19" in r["style"]
+        if is_head and not ("B" in r["style"] and big):
+            bad.append(f"제목 서식 빠짐: {r['t'][:24]}")
+        if not is_head and big:
+            bad.append(f"본문이 제목 크기: {r['t'][:24]}")
+    seq = [r for r in rows if r["kind"] in ("hr", "text") and (r["kind"] == "hr" or r["t"])]
+    glued = [seq[k]["t"][:20] for k in range(1, len(seq)) if seq[k]["t"] in headings and seq[k - 1]["kind"] != "hr"]
+    links = [s for r in rows for s in r["style"].split() if s.startswith("L:")]
+    want_links = len(re.findall(r"\]\(https?://", body))
+    videos = [r["t"][:30] for r in rows if r["kind"] == "video"]
+    want_videos = len(re.findall(r"^\s*:::\s*video\s", body, re.M))
+    cards = [r["t"][:30] for r in rows if r["kind"] == "oglink"]
+    want_cards = len(re.findall(r"^\s*:::\s*link\s", body, re.M))
+    log("서식 이상:", bad or 0, "| 붙은 소제목:", glued or 0, "| 링크:", links,
+        "| 그림:", sum(1 for r in rows if r["kind"] == "image"), "| 구분선:", sum(1 for r in rows if r["kind"] == "hr"),
+        "| 글감 카드:", sum(1 for r in rows if r["kind"] == "material"), "| 영상:", videos,
+        "| 링크 카드:", f"{len(cards)}/{want_cards}" + (f" {cards}" if cards else ""))
+    log("표지:", cover.name if cover else "없음",
+        "| 대표 이미지:", "못 지정" if rep_ok is False else (f"{rep_at}번째 그림" if rep_at is not None else "없음"))
+
+    stop = []
+    if bad:
+        stop.append("서식 이상")
+    if glued:
+        stop.append("붙은 소제목")
+    if len([x for x in links if x != "L:undefined"]) != len(meta.get("ref_codes", [])):
+        stop.append(f"체험 링크 {len(links)} != ref_codes {len(meta.get('ref_codes', []))}")
+    if len(links) != want_links:
+        log(f"링크 누락: 글에는 {want_links}개, 화면에는 {len(links)}개")
+        stop.append("링크 누락")
+    if len(videos) != want_videos:
+        log(f"영상 누락: 글에는 {want_videos}개, 화면에는 {len(videos)}개")
+        stop.append("영상 누락")
+    if any("누락" in n or "실패" in n for n in notes):
+        stop.append("글쓰기 기록에 누락/실패")
+    if cover and not rep_ok:
+        stop.append("대표 이미지 지정")
+    return stop
+
+
 async def main(args) -> int:
     folder = Path(args.folder)
     head_title, body = split_title((folder / "post.md").read_text(encoding="utf-8"))
@@ -239,7 +289,6 @@ async def main(args) -> int:
             log(f"예약 시각 {when:%m-%d %H:%M} 이 지금보다 15분 넘게 뒤가 아님. 임시저장만 한다")
             when = None
 
-    headings = {line[3:].strip() for line in body.splitlines() if line.startswith("## ")}
     t0 = time.time()
     async with Session() as ctx:
         page = await ctx.new_page()
@@ -274,48 +323,7 @@ async def main(args) -> int:
         rep_at = await rep_image_index(frame)
         rows = await frame.evaluate(DUMP)
         log(f"작성 {time.time() - t0:.0f}초 | 기록 중 확인할 것:", [n for n in notes if "글감" in n or "누락" in n or "실패" in n])
-
-        bad = []
-        for r in rows:
-            if r["kind"] != "text" or not r["t"]:
-                continue
-            is_head, big = r["t"] in headings, "se-fs19" in r["style"]
-            if is_head and not ("B" in r["style"] and big):
-                bad.append(f"제목 서식 빠짐: {r['t'][:24]}")
-            if not is_head and big:
-                bad.append(f"본문이 제목 크기: {r['t'][:24]}")
-        seq = [r for r in rows if r["kind"] in ("hr", "text") and (r["kind"] == "hr" or r["t"])]
-        glued = [seq[k]["t"][:20] for k in range(1, len(seq)) if seq[k]["t"] in headings and seq[k - 1]["kind"] != "hr"]
-        links = [s for r in rows for s in r["style"].split() if s.startswith("L:")]
-        want_links = len(re.findall(r"\]\(https?://", body))
-        videos = [r["t"][:30] for r in rows if r["kind"] == "video"]
-        want_videos = len(re.findall(r"^\s*:::\s*video\s", body, re.M))
-        cards = [r["t"][:30] for r in rows if r["kind"] == "oglink"]
-        want_cards = len(re.findall(r"^\s*:::\s*link\s", body, re.M))
-        log("서식 이상:", bad or 0, "| 붙은 소제목:", glued or 0, "| 링크:", links,
-            "| 그림:", sum(1 for r in rows if r["kind"] == "image"), "| 구분선:", sum(1 for r in rows if r["kind"] == "hr"),
-            "| 글감 카드:", sum(1 for r in rows if r["kind"] == "material"), "| 영상:", videos,
-            "| 링크 카드:", f"{len(cards)}/{want_cards}" + (f" {cards}" if cards else ""))
-        log("표지:", cover.name if cover else "없음",
-            "| 대표 이미지:", "못 지정" if rep_ok is False else (f"{rep_at}번째 그림" if rep_at is not None else "없음"))
-
-        stop = []
-        if bad:
-            stop.append("서식 이상")
-        if glued:
-            stop.append("붙은 소제목")
-        if len([x for x in links if x != "L:undefined"]) != len(meta.get("ref_codes", [])):
-            stop.append(f"체험 링크 {len(links)} != ref_codes {len(meta.get('ref_codes', []))}")
-        if len(links) != want_links:
-            log(f"링크 누락: 글에는 {want_links}개, 화면에는 {len(links)}개")
-            stop.append("링크 누락")
-        if len(videos) != want_videos:
-            log(f"영상 누락: 글에는 {want_videos}개, 화면에는 {len(videos)}개")
-            stop.append("영상 누락")
-        if any("누락" in n or "실패" in n for n in notes):
-            stop.append("글쓰기 기록에 누락/실패")
-        if cover and not rep_ok:
-            stop.append("대표 이미지 지정")
+        stop = inspect(rows, body, meta, notes, cover, rep_ok, rep_at)
 
         before = await draft_count(frame)
         await open_publish_panel(page, frame)

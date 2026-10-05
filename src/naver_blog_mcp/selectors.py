@@ -29,6 +29,10 @@ import asyncio
 
 WRITE_URL = "https://blog.naver.com/{blog_id}?Redirect=Write"
 POST_URL = "https://blog.naver.com/{blog_id}/{log_no}"
+# 발행된 글 수정 화면  [실측 2026-10-05]
+# 글 페이지의 숨은 '수정하기'(a._modifyPost)가 가는 곳. 옛 글이 제목·본문·그림까지 그대로 실린다.
+# PostUpdateForm.naver 를 바로 열면 편집기가 안 붙는다 — 이 주소로 들어가야 mainFrame 에 실린다.
+UPDATE_URL = "https://blog.naver.com/{blog_id}?Redirect=Update&logNo={log_no}"
 
 # 에디터 본체가 들어있는 iframe  [실측]
 EDITOR_FRAME = ["#mainFrame", "iframe[title*='에디터']", "iframe#se2_iframe"]
