@@ -517,6 +517,82 @@ async def delete_post(page: Page, blog_id: str, url_or_log_no: str) -> str:
     return url
 
 
+DOC_TEXT = """() => ({
+  title: ((document.querySelector('.se-documentTitle') || {}).innerText || '').trim(),
+  body: [...document.querySelectorAll('.se-component')]
+          .filter(c => !c.classList.contains('se-documentTitle'))
+          .map(c => (c.innerText || '').trim()).join('\\n'),
+  comps: document.querySelectorAll('.se-component').length,
+  images: document.querySelectorAll('.se-component.se-image').length,
+})"""
+
+
+async def goto_update(page: Page, blog_id: str, url_or_log_no: str) -> Frame:
+    """발행된 글의 수정 화면을 연다. 옛 글이 제목·본문·그림까지 실린 편집기 프레임을 돌려준다.
+
+    대상 확인을 한다 — 없는 글 번호면 네이버가 다른 화면으로 보낼 수 있어서,
+    편집기 주소에 그 번호가 있고 제목이 실렸을 때만 돌려준다(delete_post 와 같은 가드).
+    """
+    log_no = parse_log_no(url_or_log_no)
+    await page.goto(S.UPDATE_URL.format(blog_id=blog_id, log_no=log_no), wait_until="domcontentloaded")
+    if "nid.naver.com" in page.url:
+        raise EditorError("세션 만료 — uv run python login_setup.py 재실행 필요")
+    await wait_for_editor(page)
+    frame = await get_editor_frame(page)
+    await dismiss_popups(frame)
+    if log_no not in (frame.url or ""):
+        raise EditorError(f"수정 화면이 그 글을 안 열었다: {frame.url[:120]}")
+    for _ in range(20):
+        if not await title_is_empty(frame):
+            return frame
+        await asyncio.sleep(0.5)
+    raise EditorError("수정 화면에 옛 제목이 안 실렸다 — 없는 글이거나 내 글이 아니다")
+
+
+async def clear_document(page: Page, frame: Frame) -> dict:
+    """수정 화면의 제목과 본문을 비운다. 비운 뒤의 상태(DOC_TEXT)를 돌려준다.
+
+    본문: 첫 문단을 누르고 전체 선택 → 지우기. 스마트에디터 ONE 의 전체 선택은 그림·표·구분선
+    컴포넌트까지 잡아서 한 번에 빈 본문 하나만 남는다(2026-10-05 실측, 제목은 안 잡힌다).
+    제목: 본문을 먼저 비웠으니 제목 칸에서 전체 선택해 지워도 번질 것이 없다. End·Shift+Home 은
+    제목 칸에서 안 먹었다(2026-10-05 실측). 그래도 남으면 글자 수만큼 Backspace 를 누른다.
+    """
+    body = await _locate_all(frame, S.BODY)
+    if body is None:
+        raise EditorError("본문 영역을 못 찾음 — selectors.BODY 갱신 필요")
+    for _ in range(3):
+        await body.first.click()
+        await asyncio.sleep(0.3)
+        await page.keyboard.press("ControlOrMeta+A")
+        await asyncio.sleep(0.3)
+        await page.keyboard.press("Backspace")
+        await asyncio.sleep(0.8)
+        st = await frame.evaluate(DOC_TEXT)
+        if st["comps"] <= 2 and not st["images"]:
+            break
+    title_loc = await S.first(frame, S.TITLE)
+    if not title_loc:
+        raise EditorError("제목 영역을 못 찾음 — selectors.TITLE 갱신 필요")
+    for attempt in range(3):
+        await title_loc.click()
+        await asyncio.sleep(0.3)
+        if attempt < 2:
+            await page.keyboard.press("ControlOrMeta+A")
+            await page.keyboard.press("Backspace")
+        else:
+            await page.keyboard.press("End")
+            n = caret_len((await frame.evaluate(DOC_TEXT))["title"]) + 5
+            for _ in range(n):
+                await page.keyboard.press("Backspace")
+        await asyncio.sleep(0.5)
+        if await title_is_empty(frame):
+            break
+    st = await frame.evaluate(DOC_TEXT)
+    if st["comps"] > 2 or st["images"] or not await title_is_empty(frame):
+        raise EditorError(f"옛 글을 다 못 비웠다(컴포넌트 {st['comps']}개, 그림 {st['images']}개, 제목 '{st['title'][:20]}')")
+    return st
+
+
 async def delete_draft(page: Page, frame: Frame, title: str = "", index: int | None = None) -> str:
     """임시저장 글을 삭제한다. 삭제된 글의 제목을 반환. 복구되지 않는다.
 
