@@ -83,6 +83,9 @@ DUMP = r"""
   return mark.concat([...c.querySelectorAll('.se-text-paragraph')].map(p => {
     const t = p.innerText.split(String.fromCharCode(8203)).join('').trim();
     const flags = new Set();
+    // 링크는 Set 에 넣으면 같은 코드(L:undefined)끼리 한 줄에 하나로 합쳐진다. 출처 링크 여러 개를
+    // 한 줄에 단 글이 '링크 누락' 으로 막혔다(2026-10-13, 52개 중 30개로 셈). 링크는 따로 다 센다
+    const links = [];
     for (const s of p.querySelectorAll('span.__se-node')) {
       [...s.classList].filter(x => x.startsWith('se-fs')).forEach(x => flags.add(x));
       if (s.querySelector('b')) flags.add('B');
@@ -92,10 +95,10 @@ DUMP = r"""
         const h = s.getAttribute('data-href') || '';
         // 유입 코드는 두 모양으로 온다: ...apply?ref={코드} 와 leetkey.kr/l|r|y/{코드}
         const m = h.match(/[?&]ref=([^&#]+)/) || h.match(/leetkey\.kr\/(?:l|r|y)\/([^/?#]+)/);
-        flags.add('L:' + (m ? m[1] : undefined));
+        links.push('L:' + (m ? m[1] : undefined));
       }
     }
-    return {kind, t, style: [...flags].join(' ')};
+    return {kind, t, style: [...flags, ...links].join(' ')};
   }));
 })
 """
