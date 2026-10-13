@@ -892,6 +892,36 @@ async def paste_html(page: Page, frame: Frame, html: str, plain: str) -> None:
     await asyncio.sleep(0.6)
 
 
+_PASTE_EVENT_JS = """
+([html, text]) => {
+  let doc = document, t = doc.activeElement;
+  // 에디터는 입력용 iframe 을 하나 더 쓴다. 커서가 있는 문서까지 내려간다
+  while (t && t.tagName === 'IFRAME' && t.contentDocument) { doc = t.contentDocument; t = doc.activeElement; }
+  t = t || doc.body;
+  const dt = new DataTransfer();
+  dt.setData('text/html', html);
+  dt.setData('text/plain', text);
+  const ev = new ClipboardEvent('paste', {clipboardData: dt, bubbles: true, cancelable: true, composed: true});
+  t.dispatchEvent(ev);
+  return ev.defaultPrevented;
+}
+"""
+
+
+async def paste_html_event(page: Page, frame: Frame, html: str, plain: str) -> None:
+    """OS 클립보드를 거치지 않고 paste 이벤트에 HTML 을 실어 커서 자리에 보낸다.
+
+    화면이 잠기면 OS 클립보드 붙여넣기가 무반응이다(2026-10-13, 잠긴 채 올린 글 25편 전부
+    표가 글자로 갔다). 에디터는 이벤트의 clipboardData 를 직접 읽어 자기 블록으로 바꾸므로
+    잠금과 상관없다(실제 글쓰기 화면에서 표 0->1 확인). 에디터가 이벤트를 안 받으면
+    (`defaultPrevented` 가 거짓) 호출부가 OS 클립보드로 넘어간다.
+    """
+    handled = await frame.evaluate(_PASTE_EVENT_JS, [html, plain])
+    if not handled:
+        raise EditorError("paste 이벤트를 에디터가 받지 않았다")
+    await asyncio.sleep(0.6)
+
+
 # ------------------------------------------------------------ 키스트로크 폴백
 
 # 2026-08-25 실측: B/I/U 는 동작한다. 취소선 단축키(ControlOrMeta+Shift+S)는
@@ -1650,29 +1680,44 @@ async def write_post(
 
         await reset_style(page, frame)
         if prefer_paste:
-            try:
-                before = await _doc_state(frame)
-                await paste_html(page, frame, seg.html, _to_plain(seg.html))
-                # 붙여넣기는 예외 없이 조용히 실패할 수 있다 (클립보드 권한, 헤드리스 등).
-                # 본문 길이가 그대로면 안 붙은 것으로 보고 폴백한다.
-                after = await _doc_state(frame)
-                if before is None or after is None:
-                    # 확인이 안 될 뿐 대개는 붙은 상태다. 여기서 타이핑으로 넘어가면
-                    # 내용이 두 번 들어간다 — 중복이 누락보다 나쁘다.
-                    notes.append(f"{i}:붙여넣기(반영 확인 불가)")
-                    continue
-                if after != before:
-                    notes.append(f"{i}:붙여넣기")
-                    continue
-                notes.append(f"{i}:붙여넣기 무반응→타이핑")
-            except Exception as e:
-                notes.append(f"{i}:붙여넣기 실패({type(e).__name__})→타이핑")
+            # **먼저 클립보드 없이 붙인다**(2026-10-13). 화면이 잠긴 동안에는 OS 클립보드
+            # 붙여넣기가 예외 없이 무반응이라 타이핑으로 떨어지고, 표가 "a | b" 글자가 됐다
+            # (발행 글 145편 중 35편. 잠긴 채 올린 25편이 전부 그랬고 풀린 채 올린 37편은
+            # 전부 표로 갔다). 에디터는 paste 이벤트의 clipboardData 를 읽으므로 그것만으로 붙는다.
+            # 안 되면 예전처럼 OS 클립보드, 그다음 타이핑으로 간다.
+            pasted = False
+            for how, fn in (("이벤트", paste_html_event), ("클립보드", paste_html)):
+                try:
+                    before = await _doc_state(frame)
+                    await fn(page, frame, seg.html, _to_plain(seg.html))
+                    # 붙여넣기는 예외 없이 조용히 실패할 수 있다 (클립보드 권한, 헤드리스 등).
+                    # 본문 길이가 그대로면 안 붙은 것으로 보고 다음 길로 간다.
+                    after = await _doc_state(frame)
+                    if before is None or after is None:
+                        # 확인이 안 될 뿐 대개는 붙은 상태다. 여기서 타이핑으로 넘어가면
+                        # 내용이 두 번 들어간다 — 중복이 누락보다 나쁘다.
+                        notes.append(f"{i}:붙여넣기 {how}(반영 확인 불가)")
+                        pasted = True
+                        break
+                    if after != before:
+                        notes.append(f"{i}:붙여넣기 {how}")
+                        pasted = True
+                        break
+                    notes.append(f"{i}:붙여넣기 {how} 무반응")
+                except Exception as e:
+                    notes.append(f"{i}:붙여넣기 {how} 실패({type(e).__name__})")
+            if pasted:
+                continue
         lost = [b.type for b in seg.blocks if b.type == "divider"]
+        tables = sum(1 for b in seg.blocks if b.type == "table")
         for b in seg.blocks:
             await _type_block(page, frame, b)
         if lost:
             # 구분선은 키보드로 만들 수 없어 조용히 사라진다. 최소한 알린다.
             notes.append(f"{i}:구분선 {len(lost)}개 누락(타이핑 불가)")
+        if tables:
+            # 표도 키보드로 못 만든다. " | " 글자로 들어갔으니 누락으로 적어 예약을 막는다
+            notes.append(f"{i}:표 {tables}개 누락(글자로 타이핑)")
 
     return notes
 

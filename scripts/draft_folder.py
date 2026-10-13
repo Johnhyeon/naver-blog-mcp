@@ -55,6 +55,7 @@ from naver_blog_mcp.editor import (  # noqa: E402
     set_visibility,
     write_post,
 )
+from naver_blog_mcp.ir import parse_markdown  # noqa: E402
 from naver_blog_mcp.server import find_cover, preflight, read_meta, split_title  # noqa: E402
 from naver_blog_mcp.session import STATE, Session, snapshot  # noqa: E402
 
@@ -77,7 +78,9 @@ DUMP = r"""
     : c.classList.contains('se-documentTitle') ? 'title' : 'other';
   if (kind === 'hr' || kind === 'material' || kind === 'image' || kind === 'video' || kind === 'oglink')
     return [{kind, t: kind === 'image' || kind === 'hr' ? '' : c.innerText.split(String.fromCharCode(10)).join(' '), style: c.className}];
-  return [...c.querySelectorAll('.se-text-paragraph')].map(p => {
+  // 표는 칸마다 문단이 있어 아래처럼 문단으로 내보내고, 표 하나에 표시 줄 하나를 앞에 붙인다(표 수 점검용)
+  const mark = c.classList.contains('se-table') ? [{kind: 'table', t: '', style: ''}] : [];
+  return mark.concat([...c.querySelectorAll('.se-text-paragraph')].map(p => {
     const t = p.innerText.split(String.fromCharCode(8203)).join('').trim();
     const flags = new Set();
     for (const s of p.querySelectorAll('span.__se-node')) {
@@ -93,7 +96,7 @@ DUMP = r"""
       }
     }
     return {kind, t, style: [...flags].join(' ')};
-  });
+  }));
 })
 """
 
@@ -242,12 +245,14 @@ def inspect(rows, body, meta, notes, cover, rep_ok, rep_at) -> list[str]:
     want_links = len(re.findall(r"\]\(https?://", body))
     videos = [r["t"][:30] for r in rows if r["kind"] == "video"]
     want_videos = len(re.findall(r"^\s*:::\s*video\s", body, re.M))
+    tables = sum(1 for r in rows if r["kind"] == "table")
+    want_tables = sum(1 for b in parse_markdown(body) if b.type == "table")
     cards = [r["t"][:30] for r in rows if r["kind"] == "oglink"]
     want_cards = len(re.findall(r"^\s*:::\s*link\s", body, re.M))
     log("서식 이상:", bad or 0, "| 붙은 소제목:", glued or 0, "| 링크:", links,
         "| 그림:", sum(1 for r in rows if r["kind"] == "image"), "| 구분선:", sum(1 for r in rows if r["kind"] == "hr"),
         "| 글감 카드:", sum(1 for r in rows if r["kind"] == "material"), "| 영상:", videos,
-        "| 링크 카드:", f"{len(cards)}/{want_cards}" + (f" {cards}" if cards else ""))
+        "| 링크 카드:", f"{len(cards)}/{want_cards}" + (f" {cards}" if cards else ""), "| 표:", f"{tables}/{want_tables}")
     log("표지:", cover.name if cover else "없음",
         "| 대표 이미지:", "못 지정" if rep_ok is False else (f"{rep_at}번째 그림" if rep_at is not None else "없음"))
 
@@ -264,7 +269,14 @@ def inspect(rows, body, meta, notes, cover, rep_ok, rep_at) -> list[str]:
     if len(videos) != want_videos:
         log(f"영상 누락: 글에는 {want_videos}개, 화면에는 {len(videos)}개")
         stop.append("영상 누락")
-    if any("누락" in n or "실패" in n for n in notes):
+    if tables != want_tables:
+        # 붙여넣기가 안 먹으면 표가 "a | b" 글자로 들어간다. 글자로는 멀쩡해 보여 놓치기 쉽다
+        # (2026-10-13 발행 글 35편). 화면의 진짜 표 수가 글과 다르면 예약하지 않는다
+        log(f"표 누락: 글에는 {want_tables}개, 화면에는 {tables}개")
+        stop.append("표 누락")
+    # 붙여넣기 한 길이 실패하고 다음 길로 붙은 것("붙여넣기 이벤트 실패")은 정상이다. 진짜 빠진 것은
+    # "누락" 으로 적힌다(표·구분선). 표지·이미지 캡션 실패는 그대로 막는다
+    if any("누락" in n or ("실패" in n and "붙여넣기" not in n) for n in notes):
         stop.append("글쓰기 기록에 누락/실패")
     if cover and not rep_ok:
         stop.append("대표 이미지 지정")
@@ -322,7 +334,7 @@ async def main(args) -> int:
         rep_ok = await set_rep_image(page, frame, 0) if cover else None
         rep_at = await rep_image_index(frame)
         rows = await frame.evaluate(DUMP)
-        log(f"작성 {time.time() - t0:.0f}초 | 기록 중 확인할 것:", [n for n in notes if "글감" in n or "누락" in n or "실패" in n])
+        log(f"작성 {time.time() - t0:.0f}초 | 기록 중 확인할 것:", [n for n in notes if "글감" in n or "누락" in n or "실패" in n or "무반응" in n])
         stop = inspect(rows, body, meta, notes, cover, rep_ok, rep_at)
 
         before = await draft_count(frame)

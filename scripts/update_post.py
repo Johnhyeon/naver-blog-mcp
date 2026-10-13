@@ -137,7 +137,7 @@ async def main(args) -> int:
         rep_at = await rep_image_index(frame)
         rows = await frame.evaluate(DUMP)
         log(f"다시 쓰기 {time.time() - t0:.0f}초 | 기록 중 확인할 것:",
-            [n for n in notes if "글감" in n or "누락" in n or "실패" in n])
+            [n for n in notes if "글감" in n or "누락" in n or "실패" in n or "무반응" in n])
         stop = inspect(rows, body, meta, notes, cover, rep_ok, rep_at)
         new = await frame.evaluate(DOC_TEXT)
         if _norm(new["title"]) != _norm(title):
