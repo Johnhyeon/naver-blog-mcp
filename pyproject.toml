@@ -6,7 +6,13 @@ license = { text = "MIT" }
 readme = "README.md"
 description = "네이버 블로그에 서식·이미지 포함 글을 작성하는 MCP 서버"
 # mcp 2.0 에서 FastMCP -> MCPServer 로 이름이 바뀌어 1.x 와 호환되지 않는다.
-dependencies = ["mcp[cli]>=2.0.0", "playwright>=1.55.0"]
+# tzdata: 윈도우에는 시간대 데이터가 없다. leetkey-blog 발행 워커가 이 환경에서 돌며
+# America/New_York 을 읽는다(서머타임 판단). 없어서 10-13 06:45 부터 매 회차 죽었다.
+dependencies = [
+    "mcp[cli]>=2.0.0",
+    "playwright>=1.55.0",
+    "tzdata>=2026.5",
+]
 
 [project.scripts]
 naver-blog-mcp = "naver_blog_mcp.server:main"
